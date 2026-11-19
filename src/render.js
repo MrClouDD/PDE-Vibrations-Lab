@@ -24,7 +24,11 @@ export function createView(canvas) {
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.6;
   let grabbed = false;
-  controls.addEventListener('start', () => { grabbed = true; controls.autoRotate = false; });
+  const orbitListeners = [];
+  const setOrbit = on => { controls.autoRotate = on; orbitListeners.forEach(fn => fn(on)); };
+  controls.addEventListener('start', () => { grabbed = true; if (controls.autoRotate) setOrbit(false); });
+  // Where the last refit put the camera, for the Reset button.
+  const fit = { center: new THREE.Vector3(), dist: 1, dir: new THREE.Vector3(1, 0.8, 1).normalize() };
   scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 0.7));
   const sun = new THREE.DirectionalLight(0xffffff, 1.9);
   sun.castShadow = true;
@@ -79,9 +83,19 @@ export function createView(canvas) {
       if (!refit) return;
       const vf = (camera.fov * Math.PI) / 360, hf = Math.atan(Math.tan(vf) * camera.aspect);
       const dist = (s.radius * 1.12) / Math.sin(Math.min(vf, hf));
+      fit.center.copy(s.center); fit.dist = dist; fit.dir.set(...dir).normalize();
       controls.target.copy(s.center);
-      camera.position.copy(s.center).add(new THREE.Vector3(...dir).normalize().multiplyScalar(dist));
+      camera.position.copy(s.center).add(fit.dir.clone().multiplyScalar(dist));
     },
+    // Reset view button: back to the starting viewpoint (also undoes any pan).
+    resetCamera() {
+      controls.target.copy(fit.center);
+      camera.position.copy(fit.center).add(fit.dir.clone().multiplyScalar(fit.dist));
+      dirty = true;
+    },
+    orbit: () => controls.autoRotate,
+    setOrbit,
+    onOrbit: fn => orbitListeners.push(fn),
     // Draws only when the scene changed (force), the camera moved (drag, damping, auto-orbit) or the view resized,
     // so a paused, untouched page costs nothing.
     frame(force) {

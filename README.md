@@ -1,5 +1,9 @@
 # Vibrations Lab
 
+Created with Claude for MATH 4100 Partial Differential Equations, Dr. Keith Erickson, Georgia Gwinnett College (GGC).
+
+**Live:** https://mrcloudd.github.io/PDE-Vibrations-Lab/
+
 An interactive 3D visualizer for vibration problems from Zill, *Differential Equations with
 Boundary-Value Problems* (9th ed.), built around Exercises 13.3 #11: radial vibrations of a sphere,
 a²(u_rr + (2/r)u_r) = u_tt, u(c,t) = 0, u(r,0) = f(r), u_t(r,0) = g(r).

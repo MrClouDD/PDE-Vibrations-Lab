@@ -38,7 +38,19 @@
   .legend { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); right: 16px; bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font: 12px var(--mono); color: var(--muted); pointer-events: none; }
   .bar { width: 120px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgb(26,92,199), rgb(168,181,194), rgb(219,56,36)); }
   .hint { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: 44px; margin: 0; padding: 6px 10px; border-radius: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--rule); font-size: 13px; pointer-events: none; transition: opacity 0.6s; }
-  .hint.gone { opacity: 0; }
+  /* Always-visible camera guide: mouse wording on desktops, touch wording on touch screens. */
+  .keys { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+  .keys b { font-weight: 600; color: var(--accent); }
+  .keys b:not(:first-child) { margin-left: 6px; }
+  .touch { display: none; }
+  @media (hover: none) and (pointer: coarse) { .mouse { display: none; } .touch { display: flex; } }
+  /* Camera buttons, top-right of the 3D view. */
+  .camera { position: absolute; top: 16px; right: max(16px, env(safe-area-inset-right, 0px)); display: flex; gap: 4px; }
+  .camera button { font: 500 12px var(--body); color: var(--fg); background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 9px; }
+  .camera button:hover { border-color: var(--accent); }
+  .camera button[aria-pressed="true"] { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .overlay { right: 180px; }
+  @media (max-width: 760px) { .hint { left: max(16px, env(safe-area-inset-left, 0px)); right: auto; } }
   aside { background: var(--panel); border-left: 1px solid var(--rule); overflow-y: auto; padding-block: 16px 24px; padding-left: 18px; padding-right: max(18px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 18px; min-width: 0; }
   fieldset { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
   legend { padding: 0; margin-bottom: 4px; font: 600 11px var(--body); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
@@ -97,7 +109,14 @@
       <div id="period"></div>
     </div>
     <p id="boot-error" class="boot-error" role="alert" hidden></p>
-    <p id="hint" class="hint">Drag to rotate · scroll or pinch to zoom</p>
+    <div id="hint" class="hint" aria-label="Camera controls">
+      <div class="keys mouse"><b>Rotate</b> left-drag <b>Pan</b> right-drag <b>Zoom</b> scroll wheel</div>
+      <div class="keys touch"><b>Rotate</b> one-finger drag <b>Pan</b> two-finger drag <b>Zoom</b> pinch</div>
+    </div>
+    <div class="camera" role="toolbar" aria-label="Camera">
+      <button type="button" data-cam="reset" title="Back to the starting view">Reset view</button>
+      <button type="button" data-cam="orbit" id="orbit" aria-pressed="true" title="Slowly turn the view">Orbit</button>
+    </div>
     <div class="legend"><span>u &lt; 0</span><span class="bar"></span><span>u &gt; 0</span><span id="legend-note"></span></div>
   </div>
 

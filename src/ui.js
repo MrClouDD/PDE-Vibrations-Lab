@@ -183,7 +183,6 @@ function syncControls() {
   $('psi-row').hidden = state.view !== 'slice';
   $('string-row').hidden = $('string-note').hidden = !withString;
   $('legend-note').textContent = withString && state.showString ? '· right: string v = r·u' : '';
-  view.controls.autoRotate = lap || !view.grabbed();
 }
 
 // Boundary boxes per shape and boundary condition. `vars` are the formula's variables; `at` maps them
@@ -401,8 +400,14 @@ $('problem').addEventListener('change', e => {
   syncControls();
   rebuild(true);
 });
-// The how-to hint fades once someone has dragged the view.
-$('stage').addEventListener('pointerdown', () => setTimeout(() => $('hint').classList.add('gone'), 1500), { once: true });
+// Camera buttons: Reset view (back to the starting viewpoint, undoing any pan) and Orbit on/off.
+// The mouse/touch guide beside them (index.html) stays on screen.
+document.querySelector('.camera').addEventListener('click', e => {
+  const k = e.target.closest('button')?.dataset.cam;
+  if (k === 'orbit') view.setOrbit(!view.orbit());
+  if (k === 'reset') view.resetCamera();
+});
+view.onOrbit(on => $('orbit').setAttribute('aria-pressed', String(on)));
 
 // Animation loop. dt is clamped so a hidden tab resumes without a jump.
 let last = performance.now();
