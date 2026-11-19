@@ -441,6 +441,27 @@ function latticeParts(p, opts, isCyl) {
   return { parts, extras, dir: [1, 0.5, 1.2] };
 }
 
+// Rippling shells: nested spheres (cylinder: coaxial tubes) at fixed fractions of the radius, each pushed
+// in or out along the radius by u and colored by u. Radial problems pulse like nested bubbles; others
+// wobble and ripple in 3D. A wedge toward the starting camera is left open so the inner shells show.
+function shellParts(p, opts, isCyl) {
+  const c = p.c, L = isCyl ? p.L : 0, parts = [];
+  const A0 = Math.PI / 2, A1 = 2 * Math.PI; // open wedge 0 < angle < π/2 faces the camera
+  for (const f of [0.2, 0.4, 0.6, 0.8]) {
+    parts.push(gridPart({
+      nu: isCyl ? 40 : 56, nv: 112, amp: 0.08 * c, group: 'shell',
+      material: surfaceMat({ transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }),
+      coordAt: isCyl
+        ? (i, j) => [f * c, A0 + ((A1 - A0) * j) / 112, (L * i) / 40]
+        : (i, j) => [f * c, (Math.PI * i) / 56, A0 + ((A1 - A0) * j) / 112],
+      place: isCyl ? (k, v, s) => cyl(k[0] + s * v, k[1], k[2], L) : (k, v, s) => sph(k[0] + s * v, k[1], k[2]),
+    }));
+  }
+  const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.03 * c, 1.03 * c, 1.01 * L, 96, 1) : new THREE.SphereGeometry(1.03 * c, 96, 64))];
+  if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
+  return { parts, extras, dir: [1, 0.6, 1.1] };
+}
+
 function cloudParts(p, opts, isCyl) {
   const c = p.c, L = isCyl ? p.L : 0, rand = rng(7), coords = [], N = 9000;
   for (let k = 0; k < N; k++) {
@@ -563,6 +584,7 @@ export function buildMesh(shapeId, p, opts = {}) {
     : solid && (opts.view === 'pond' || opts.view === 'glass') ? pondParts(p, opts, isCyl)
     : solid && opts.view === 'cloud' ? cloudParts(p, opts, isCyl)
     : solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
+    : solid && opts.view === 'shells' ? shellParts(p, opts, isCyl)
       : BUILDERS[shapeId](p, opts);
   const group = new THREE.Group();
   const coords = [], offs = [];
