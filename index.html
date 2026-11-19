@@ -169,7 +169,6 @@
     <details id="own">
       <summary>Try your own problem</summary>
       <div class="stack">
-        <label><span>Equation</span><select id="eqn"></select></label>
         <label><span>Shape</span><select id="shape"></select></label>
         <label id="bc-row"><span>Boundary condition</span><select id="bc"></select></label>
         <div id="bcv" class="stack"></div>
@@ -183,7 +182,6 @@
           <label><span id="g-label">g initial velocity</span><input id="g" type="text" spellcheck="false" autocomplete="off"></label>
           <div class="err" id="g-err" role="alert"></div>
         </div>
-        <label id="us-row" hidden><span>Boundary temperature u<sub>s</sub> (held fixed)</span><input id="us" type="number" step="10" value="0"></label>
         <p class="note">Type formulas the usual way: <code>1 - r/c</code>, <code>exp(-20*(r/c)^2)</code>, <code>sin(pi*x/L)</code>, <code>cos(θ)</code> (or <code>theta</code>). Use <code>*</code> to multiply and <code>^</code> for powers. Available: sin, cos, tan, exp, log, sqrt, abs, min, max, pi, besselj0. Piecewise: <code>x &lt; 0.3*L ? x : 0</code>. String boundary values may use t.</p>
       </div>
     </details>

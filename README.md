@@ -14,6 +14,6 @@ coefficients, and the motion in 3D, which you can rotate and zoom.
 
 - Shapes: string, rectangular membrane, drum, solid sphere, solid cylinder
 - Book problems: 13.3 #11, 12.6 #9, #10, #15, #20, 12.7 #6, Ch. 12 Review #6 and #8, and more
-- Your own f, g, boundary values and forcing; heat and Laplace equations as a bonus
+- Your own f, g, boundary values and forcing
 
 Tests (Node 20+): `npm install --no-save mathjs@12.4.2` then `node --test "tests/*.test.mjs"`.

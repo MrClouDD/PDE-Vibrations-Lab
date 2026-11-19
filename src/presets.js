@@ -41,34 +41,6 @@ export const PRESETS = {
   ],
 };
 
-// Heat (bonus): f is the initial temperature, us the temperature held on a fixed boundary.
-// Shapes without an entry reuse their wave presets as temperatures with us = 0.
-export const HEAT_PRESETS = {
-  sphere: [
-    { id: 'book9', label: 'Zill 13.3 #9: surface held at 100, starts at 0', f: '0', us: 100 },
-    { id: 'hot', label: 'Hot center, surface at 0', f: '100*exp(-20*(r/c)^2)', us: 0 },
-  ],
-};
-
-// Laplace (bonus): h is the boundary data.
-export const LAPLACE_PRESETS = {
-  sphere: [
-    { id: 'book1', label: 'Zill 13.3 #1: 50 on the top half, 0 below', h: 'θ < pi/2 ? 50 : 0' },
-    { id: 'book3', label: 'Zill 13.3 #3: h = cos θ', h: 'cos(θ)' },
-    { id: 'rev11', label: 'Zill Ch. 13 Review #11: 100 top, −100 bottom', h: 'θ < pi/2 ? 100 : -100' },
-  ],
-  disk: [
-    { id: 'rev1', label: 'Zill Ch. 13 Review #1: u₀ top half, −u₀ bottom', h: 'θ < pi ? 1 : -1' },
-    { id: 'rev2', label: 'Zill Ch. 13 Review #2: 1 on the right half', h: 'θ < pi/2 or θ > 3*pi/2 ? 1 : 0' },
-    { id: '131-2', label: 'Zill 13.1 #2: h = θ on (0, π), 2π − θ on (π, 2π)', h: 'θ < pi ? θ : 2*pi - θ' },
-    { id: '131-4', label: 'Zill 13.1 #4: h = θ on (0, 2π)', h: 'θ' },
-  ],
-  rect: [
-    { id: 'sine', label: 'h = sin(πx/Lx)', h: 'sin(pi*x/Lx)' },
-    { id: 'tent', label: 'h = x(Lx − x)', h: 'x*(Lx - x)' },
-  ],
-};
-
 // One picker for the page: the book's problems first (any shape), then the demos grouped by shape.
 // Values are `shape:presetId`. Book problems are the presets whose label starts with "Zill".
 const SHAPE_NAME = { sphere: 'Solid sphere', string: 'String', disk: 'Drum', rect: 'Rectangular membrane', cylinder: 'Solid cylinder' };

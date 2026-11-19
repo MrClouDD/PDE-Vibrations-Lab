@@ -1,22 +1,18 @@
 import { createView, buildMesh } from './render.js';
 import { SHAPES } from './shapes/index.js';
 import { project, basisOn, evaluate, findPeriod, clampN } from './solve.js';
-import { PRESETS, HEAT_PRESETS, LAPLACE_PRESETS, problemList } from './presets.js';
+import { PRESETS, problemList } from './presets.js';
 import { statement, coefTex, bookCoefs } from './statement.js';
 import { compileIC } from './ic.js';
-import { evaluateHeat, heatSettle, laplaceTerms } from './bonus.js';
 import { isRadial } from './shapes/sphere.js';
 import { solveFull, evaluateFull } from './drive.js';
 
 const $ = id => document.getElementById(id);
 const PARAM_LABEL = { a: 'Wave speed a', c: 'Radius c', L: 'Length L', Lx: 'Width Lx', Ly: 'Height Ly' };
-const LAPLACE_SHAPES = ['sphere', 'disk', 'rect'];
-// Heat mode uses the `a` box as the diffusivity k; real-time seconds per heat replay at 0.5× speed.
-const HEAT_REPLAY = 6;
 
 const view = createView($('stage'));
 const state = {
-  eqn: 'wave', shape: 'sphere', bc: 'fixed', preset: 'book11', f: '1 - r/c', g: '0', us: 0, bcv: {}, F: '',
+  shape: 'sphere', bc: 'fixed', preset: 'book11', f: '1 - r/c', g: '0', bcv: {}, F: '',
   params: { ...SHAPES.sphere.defaults }, N: 30, explore: false, idx: [], t: 0, speed: 0.5, playing: true,
   gain: 1, showString: true,
   // Each shape remembers its own view (see VIEWS).
@@ -28,7 +24,7 @@ const state = {
 let sol = null, mesh = null;
 // Last formulas that compiled, so a typo never strands a freshly rebuilt mesh without a solution.
 const good = { f: null, g: null };
-let lastRadial = false, lastModal = false, lastUs = 0; // what solveCore actually solved, for the statement
+let lastRadial = false, lastModal = false; // what solveCore actually solved, for the statement
 
 // Typeset rows of TeX into el, each with an optional book-style tag "(1)". Without MathJax the TeX shows as text.
 function renderMath(el, rows) {
@@ -52,11 +48,10 @@ function renderMath(el, rows) {
 
 // The worked example in the panel: (1) PDE, (2) boundary, (3) initial, then the series and its first coefficients.
 function renderStatement() {
-  const s = statement({ ...state, radial: lastRadial, modal: lastModal, us: lastUs });
-  const lap = state.eqn === 'laplace', last = s.conds.length - 1;
+  const s = statement({ ...state, radial: lastRadial, modal: lastModal }), last = s.conds.length - 1;
   renderMath($('statement'), [
     { tex: s.pde, tag: 1 },
-    ...s.conds.map((tex, i) => ({ tex, tag: lap || i < last ? 2 : 3 })),
+    ...s.conds.map((tex, i) => ({ tex, tag: i < last ? 2 : 3 })),
   ]);
   renderMath($('solution'), s.series.map(tex => ({ tex })));
   let coef = '';
@@ -68,9 +63,7 @@ function renderStatement() {
     const { A, B } = bookCoefs({ ...state, radial: lastRadial, a: state.params.a }, modes, raw.A, raw.B);
     // Radial sphere: the series shown is indexed by n alone (all modes have l = 0).
     const labels = modes.map(m => (lastRadial ? m.label.replace(/l=0,\s*/, '') : m.label));
-    coef = sol.kind === 'heat' ? coefTex(A, null, 4, { labels })
-      : sol.kind === 'laplace' ? coefTex(A, null, 4, { labels, trigAsB: state.shape === 'disk' })
-        : coefTex(A, B, 4, { labels });
+    coef = coefTex(A, B, 4, { labels });
   }
   $('coefs-head').hidden = !coef;
   renderMath($('coefs'), coef ? [{ tex: coef }] : []);
@@ -82,13 +75,10 @@ const opt = (sel, items, value) => {
   sel.replaceChildren(...items.map(([v, label]) => new Option(label, v)));
   sel.value = value;
 };
-const presetList = () =>
-  state.eqn === 'laplace' ? LAPLACE_PRESETS[state.shape]
-    : state.eqn === 'heat' ? (HEAT_PRESETS[state.shape] ?? PRESETS[state.shape].map(p => ({ ...p, label: `${p.label} (as temperature)`, us: 0 })))
-      : PRESETS[state.shape];
+const presetList = () => PRESETS[state.shape];
 
 function loadPreset(pre) {
-  Object.assign(state, { preset: pre.id, f: pre.f ?? pre.h, g: pre.g ?? '0', us: pre.us ?? 0, t: 0, bcv: { ...(pre.bcv || {}) }, F: pre.F ?? '' });
+  Object.assign(state, { preset: pre.id, f: pre.f, g: pre.g ?? '0', t: 0, bcv: { ...(pre.bcv || {}) }, F: pre.F ?? '' });
   if (pre.bc) state.bc = pre.bc;
   if (pre.params) Object.assign(state.params, pre.params);
   if (pre.N && state.N < pre.N) state.N = Math.min(pre.N, SHAPES[state.shape].maxN); // narrow pulses need more terms
@@ -97,7 +87,6 @@ function loadPreset(pre) {
 function shapeChanged() {
   const S = SHAPES[state.shape];
   good.f = good.g = null;
-  if (state.eqn === 'laplace' && !LAPLACE_SHAPES.includes(state.shape)) state.eqn = 'wave';
   state.params = { ...S.defaults };
   state.bc = S.bcs[0].id;
   loadPreset(presetList()[0]);
@@ -193,13 +182,10 @@ function renderVis() {
 }
 
 function syncControls() {
-  const S = SHAPES[state.shape], wave = state.eqn === 'wave', lap = state.eqn === 'laplace';
-  opt($('eqn'), [['wave', 'Wave equation'], ['heat', 'Heat equation (bonus)'],
-    ...(LAPLACE_SHAPES.includes(state.shape) ? [['laplace', "Laplace's equation (bonus)"]] : [])], state.eqn);
+  const S = SHAPES[state.shape];
   opt($('bc'), S.bcs.map(b => [b.id, b.label]), state.bc);
-  $('bc-row').hidden = lap;
-  // Boundary value / slope boxes (wave equation only), in the forms the book's vibration problems use.
-  const fields = wave && !state.explore ? bcFields() : [];
+  // Boundary value / slope boxes, in the forms the book's vibration problems use.
+  const fields = !state.explore ? bcFields() : [];
   $('bcv').replaceChildren(...fields.map(fd => {
     const lab = document.createElement('label');
     lab.innerHTML = `<span>${fd.label}</span><input id="bcv-${fd.key}" type="text" spellcheck="false" autocomplete="off" placeholder="0">`;
@@ -212,7 +198,7 @@ function syncControls() {
     });
     return lab;
   }));
-  const note = !wave || state.explore ? '' : state.shape === 'cylinder'
+  const note = state.explore ? '' : state.shape === 'cylinder'
     ? 'Boundary values aren\'t available for the cylinder; no vibration problem in the book uses them.'
     : state.shape === 'rect' && state.bc !== 'fixed' ? 'Boundary values on the rectangle need all edges fixed.' : '';
   $('bcv-note').textContent = note; $('bcv-note').hidden = !note;
@@ -220,17 +206,12 @@ function syncControls() {
   opt($('preset'), [...presetList().map(p => [p.id, p.label]), ['custom', 'Custom (type below)']], state.preset);
   $('f').value = state.f; $('g').value = state.g;
   const vars = S.icVars ?? S.coords.join(', ');
-  $('f-label').textContent = lap
-    ? (state.shape === 'rect' ? 'h(x) on the top edge y = Ly' : 'h(θ) on the boundary r = c')
-    : state.eqn === 'heat' ? `f(${vars}) initial temperature` : `f(${vars}) initial shape`;
+  $('f-label').textContent = `f(${vars}) initial shape`;
   $('g-label').textContent = `g(${vars}) initial velocity`;
-  $('g-row').hidden = !wave;
-  $('us-row').hidden = state.eqn !== 'heat' || /free/.test(state.bc);
-  $('us').value = state.us;
-  $('params').replaceChildren(...Object.keys(S.defaults).filter(k => !(lap && k === 'a')).map(k => {
+  $('params').replaceChildren(...Object.keys(S.defaults).map(k => {
     const lab = document.createElement('label');
     lab.className = 'num';
-    const name = k === 'a' && state.eqn === 'heat' ? 'Diffusivity k' : PARAM_LABEL[k] || k;
+    const name = PARAM_LABEL[k] || k;
     lab.innerHTML = `<span>${name}</span><input id="p-${k}" type="number" step="0.1" min="0.1" value="${state.params[k]}">`;
     lab.querySelector('input').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
@@ -248,10 +229,9 @@ function syncControls() {
     });
     return lab;
   }));
-  $('explore-row').hidden = !wave;
   $('explore').checked = state.explore;
   $('explore-idx').hidden = $('explore-info').hidden = !state.explore;
-  $('N').max = lap ? 60 : S.maxN; $('N').value = state.N; $('N-out').textContent = state.N;
+  $('N').max = S.maxN; $('N').value = state.N; $('N-out').textContent = state.N;
   // One picker for the book's problems (any shape) and the demos; anything else reads "your own problem".
   const pick = `${state.shape}:${state.preset}`, list = problemList();
   const groups = [...new Set(list.map(i => i.group))].map(g => {
@@ -261,13 +241,11 @@ function syncControls() {
     return og;
   });
   $('problem').replaceChildren(...groups, new Option('Your own problem (see "Try your own problem" below)', 'custom'));
-  $('problem').value = wave && list.some(i => i.value === pick) ? pick : 'custom';
+  $('problem').value = list.some(i => i.value === pick) ? pick : 'custom';
   const chosen = list.find(i => i.value === $('problem').value);
-  $('eq').textContent = (chosen ? chosen.label
-    : wave ? 'Your own problem' : lap ? "Laplace's equation (bonus)" : 'Heat equation (bonus)')
-    + (wave && state.explore ? ' · showing one standing wave' : '');
+  $('eq').textContent = (chosen ? chosen.label : 'Your own problem') + (state.explore ? ' · showing one standing wave' : '');
   const solid = state.shape === 'sphere' || state.shape === 'cylinder';
-  const withString = state.shape === 'sphere' && wave;
+  const withString = state.shape === 'sphere';
   $('view-pick').querySelector('span').textContent = solid ? 'Show the inside as' : 'Show it as';
   opt($('view'), VIEWS[state.shape], curView());
   renderVis();
@@ -316,7 +294,7 @@ function boundarySpec(p) {
 }
 
 function rebuild(refit) {
-  const showString = state.showString && state.eqn === 'wave';
+  const showString = state.showString;
   mesh = buildMesh(state.shape, state.params, { showString, view: curView(), vis: state.vis });
   view.setObject(mesh.object3D, refit, mesh.dir);
   solve();
@@ -340,7 +318,7 @@ function solveCore() {
   const S = SHAPES[state.shape], p = state.params;
   const sample = S.coords.map((_, i) => (i === 0 ? 0.5 * S.size(p) : 0.7));
   const f = compileIC(state.f, S.coords, p, sample);
-  const g = state.eqn === 'wave' ? compileIC(state.g, S.coords, p, sample) : { fn: () => 0 };
+  const g = compileIC(state.g, S.coords, p, sample);
   $('f-err').textContent = f.error || ''; $('g-err').textContent = g.error || '';
   // On a typo keep solving with the last valid formula (the error stays visible under the input).
   for (const [k, c] of [['f', f], ['g', g]]) {
@@ -348,40 +326,9 @@ function solveCore() {
     if (c.fn) c.error = null; // solvable with the fallback; the message stays on screen
   }
   const radial = state.shape === 'sphere' && isRadial(f.fn ?? (() => 0), g.fn ?? (() => 0), p.c);
-  lastRadial = radial; lastModal = false; lastUs = 0;
+  lastRadial = radial; lastModal = false;
   const out = new Float32Array(mesh.coords.length);
   const steps = n => Array.from({ length: 24 }, (_, k) => (n * k) / 24);
-
-  if (state.eqn === 'laplace') {
-    if (f.error) return;
-    const N = Math.min(state.N, 60);
-    const h = c => { let v; try { v = f.fn(c); } catch { v = 0; } return Number.isFinite(v) ? v : 0; };
-    const { modes, A } = laplaceTerms(state.shape, p, h, N), B = new Float64Array(N);
-    const basis = basisOn(modes, mesh.coords);
-    calibrate(() => (evaluate(basis, modes, A, B, 0, out), out), [0]);
-    sol = { kind: 'laplace', modes, A, B, basis, out, loop: N * 0.4 + 2, window: N * 0.4 + 2 };
-    $('warn').textContent = '';
-    $('period').textContent = `Steady state, built one term at a time (${N} terms).`;
-    $('scrub').max = sol.window;
-    return;
-  }
-
-  if (state.eqn === 'heat') {
-    if (f.error) return;
-    const us = $('us-row').hidden ? 0 : state.us, k = p.a;
-    lastUs = us;
-    const { N, capped } = clampN(S, state.N);
-    const modes = S.modes(p, state.bc, N, { radial });
-    const { A, warnings } = project(modes, S.quadGrid(p, { N, radial }), c => f.fn(c) - us, () => 0);
-    const basis = basisOn(modes, mesh.coords);
-    const settle = heatSettle(modes, A, k, p.a) || 1, loop = settle * 1.25;
-    calibrate(t => (evaluateHeat(basis, modes, A, k, p.a, t, out, us), out), steps(settle));
-    sol = { kind: 'heat', modes, A, basis, out, us, k, loop, window: loop, rate: loop / HEAT_REPLAY / 0.5 };
-    $('warn').textContent = [...warnings, capped ? `N capped at ${N} for this shape.` : ''].filter(Boolean).join(' ');
-    $('period').textContent = `Heat spreads to steady state by t ≈ ${settle.toFixed(3)}, then replays.`;
-    $('scrub').max = sol.window;
-    return;
-  }
 
   if (state.explore) {
     // A single pure mode φ cos(ωt): A = 1, B = 0, so nothing drifts and nothing is capped.
@@ -428,10 +375,6 @@ function solveCore() {
 }
 
 // Controls
-$('eqn').addEventListener('change', e => {
-  state.eqn = e.target.value; state.explore = false; good.f = good.g = null;
-  loadPreset(presetList()[0]); syncControls(); rebuild(false);
-});
 $('shape').addEventListener('change', e => { state.shape = e.target.value; shapeChanged(); });
 $('bc').addEventListener('change', e => { state.bc = e.target.value; state.t = 0; syncControls(); solve(); });
 $('preset').addEventListener('change', e => {
@@ -445,7 +388,6 @@ for (const k of ['f', 'g']) $(k).addEventListener('input', e => {
   state[k] = e.target.value; state.preset = 'custom'; $('preset').value = 'custom';
   clearTimeout(typing); typing = setTimeout(() => { state.t = 0; solve(); }, 300);
 });
-$('us').addEventListener('change', e => { state.us = parseFloat(e.target.value) || 0; state.t = 0; solve(); });
 $('explore').addEventListener('change', e => { state.explore = e.target.checked; state.t = 0; syncControls(); solve(); });
 $('N').addEventListener('input', e => { state.N = +e.target.value; $('N-out').textContent = state.N; });
 $('N').addEventListener('change', () => { state.t = 0; solve(); });
@@ -463,7 +405,7 @@ $('show-string').addEventListener('change', e => { state.showString = e.target.c
 $('problem').addEventListener('change', e => {
   if (e.target.value === 'custom') { $('own').open = true; return; }
   const [shape, id] = e.target.value.split(':'), S = SHAPES[shape];
-  Object.assign(state, { eqn: 'wave', explore: false, shape, params: { ...S.defaults }, bc: S.bcs[0].id, N: 30, idx: S.explorer.map(x => x.def) });
+  Object.assign(state, { explore: false, shape, params: { ...S.defaults }, bc: S.bcs[0].id, N: 30, idx: S.explorer.map(x => x.def) });
   good.f = good.g = null;
   $('shape').value = shape;
   loadPreset(PRESETS[shape].find(p => p.id === id));
@@ -493,16 +435,10 @@ function tick(now) {
   const changed = !!sol && (state.playing || sol !== drawn.sol || state.t !== drawn.t || state.gain !== drawn.gain);
   if (changed) {
     if (state.playing) {
-      // Laplace advances one term per 0.4 s of real time regardless of speed; the others scale with speed.
-      state.t += sol.kind === 'laplace' ? dt : dt * state.speed * sol.rate;
+      state.t += dt * state.speed * sol.rate;
       if (sol.loop) state.t %= sol.loop;
     }
-    if (sol.kind === 'heat') evaluateHeat(sol.basis, sol.modes, sol.A, sol.k, state.params.a, Math.min(state.t, sol.loop / 1.25), sol.out, sol.us);
-    else if (sol.kind === 'laplace') {
-      const n = Math.max(1, Math.min(sol.modes.length, Math.floor(state.t / 0.4) + 1));
-      evaluate(sol.basis, sol.modes, sol.A, sol.B, 0, sol.out, n);
-      $('period').textContent = `Steady state, built one term at a time: ${n} of ${sol.modes.length} terms.`;
-    } else if (sol.kind === 'full') evaluateFull(sol.full, state.t, sol.out);
+    if (sol.kind === 'full') evaluateFull(sol.full, state.t, sol.out);
     else evaluate(sol.basis, sol.modes, sol.A, sol.B, state.t, sol.out);
     mesh.apply(sol.out, state.gain);
     $('t-out').textContent = state.t.toFixed(2);

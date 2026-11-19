@@ -16,7 +16,7 @@ test('toTex typesets formulas and never throws on a typo', () => {
 });
 
 test('statement: #11 as the book writes it', () => {
-  const s = statement({ eqn: 'wave', shape: 'sphere', bc: 'fixed', f: '1 - r/c', g: '0', bcv: {}, F: '', radial: true });
+  const s = statement({ shape: 'sphere', bc: 'fixed', f: '1 - r/c', g: '0', bcv: {}, F: '', radial: true });
   has(s.conds, 'u(c,t)=0');
   has(s.conds, String.raw`\frac{r}{c}`);
   assert.ok(s.pde.includes('u_{tt}'));
@@ -24,15 +24,15 @@ test('statement: #11 as the book writes it', () => {
 });
 
 test('statement: driven string end shows the typed boundary value and ψ + v', () => {
-  const s = statement({ eqn: 'wave', shape: 'string', bc: 'fixed', f: '0', g: '0', bcv: { right: 'sin(t)' }, F: '' });
+  const s = statement({ shape: 'string', bc: 'fixed', f: '0', g: '0', bcv: { right: 'sin(t)' }, F: '' });
   has(s.conds, String.raw`u(L,t)=\sin`);
   has(s.series, String.raw`\psi`);
 });
 
-test('statement: every shape, BC and equation produces strings', () => {
-  for (const eqn of ['wave', 'heat', 'laplace']) for (const shape of ['sphere', 'string', 'rect', 'disk', 'cylinder'])
+test('statement: every shape and BC produces strings', () => {
+  for (const shape of ['sphere', 'string', 'rect', 'disk', 'cylinder'])
     for (const bc of ['fixed', 'free', 'fixfree', 'mixed', 'sidefree', 'endsfree']) {
-      const s = statement({ eqn, shape, bc, f: '1', g: '0', bcv: {}, F: '', us: 0 });
+      const s = statement({ shape, bc, f: '1', g: '0', bcv: {}, F: '' });
       assert.equal(typeof s.pde, 'string');
       assert.ok(s.conds.length > 0);
     }
@@ -64,31 +64,21 @@ test('bookCoefs: #11 coefficients in the book normalization, A_n = 8/(nπ)^3 for
 });
 
 test('review: forced or driven problems show the modal form T_n(t), not cos/sin with A_n', () => {
-  const s = statement({ eqn: 'wave', shape: 'string', bc: 'fixed', f: '0', g: '0', bcv: {}, F: '-1', modal: true });
+  const s = statement({ shape: 'string', bc: 'fixed', f: '0', g: '0', bcv: {}, F: '-1', modal: true });
   has(s.series, 'T_n');
   assert.ok(!s.series.some(x => x.includes(String.raw`A_n\cos`)), s.series.join('\n'));
 });
 
 test('review: all-free boundaries show the rigid n = 0 term A_0 + B_0 t', () => {
   for (const shape of ['string', 'disk', 'rect', 'sphere', 'cylinder']) {
-    const s = statement({ eqn: 'wave', shape, bc: 'free', f: '1', g: '0', bcv: {}, F: '' });
+    const s = statement({ shape, bc: 'free', f: '1', g: '0', bcv: {}, F: '' });
     has(s.series, 'B_0t');
   }
 });
 
-test('minor: heat defines λ_n; radial free sphere names j_0, not j_l P_l', () => {
-  const s = statement({ eqn: 'heat', shape: 'string', bc: 'fixed', f: '1', us: 0 });
-  has(s.series, String.raw`\lambda_n=`);
-  const r = statement({ eqn: 'heat', shape: 'sphere', bc: 'free', f: '1', us: 0, radial: true });
+test('minor: radial free sphere names j_0, not j_l P_l', () => {
+  const r = statement({ shape: 'sphere', bc: 'free', f: '1', g: '0', bcv: {}, F: '', radial: true });
   assert.ok(!r.series.some(x => x.includes('P_l')), r.series.join('\n'));
-});
-
-test('minor: Laplace series split into short rows; disk gets its coefficient integrals', () => {
-  for (const shape of ['sphere', 'disk', 'rect']) {
-    const s = statement({ eqn: 'laplace', shape, bc: 'fixed', f: '1' });
-    assert.ok(s.series.length >= 2, shape);
-  }
-  has(statement({ eqn: 'laplace', shape: 'disk', bc: 'fixed', f: '1' }).series, 'B_n=');
 });
 
 test('minor: besselj0 typesets as J_0 with its first zero x_1', () => {
@@ -105,17 +95,9 @@ test('problemList: book problems in section order after #11, including the assig
   for (let i = 1; i < keys.length; i++) assert.ok(before(keys[i - 1], keys[i]) <= 0, `${book[i]} before ${book[i + 1]}`);
 });
 
-test('bookCoefs leaves Laplace (ω = 0) coefficients alone', async () => {
-  const { bookCoefs } = await import('../src/statement.js');
-  const { A } = bookCoefs({ eqn: 'laplace', shape: 'sphere', bc: 'fixed', radial: true, a: 1 }, [{ omega: 0 }], [2], null);
-  assert.equal(A[0], 2);
-});
-
-test('review: coefficients are labelled by mode, sin terms as B for the Laplace disk', () => {
+test('review: coefficients are labelled by mode, with cos/sin superscripts', () => {
   const t = coefTex([1, 2, 3], null, 4, { labels: ['m=0, n=1', 'm=2, n=1 (cos)', 'm=2, n=1 (sin)'] });
   assert.ok(t.includes('A_{0,1}=1') && t.includes(String.raw`A_{2,1}^{\cos}=2`), t);
-  const d = coefTex([1, 2, 3], null, 4, { labels: ['n=0', 'n=1 (cos)', 'n=1 (sin)'], trigAsB: true });
-  assert.ok(d.includes('A_{0}=1') && d.includes('A_{1}=2') && d.includes('B_{1}=3'), d);
 });
 
 test('Review #6 preset visibly moves: mid-string swings by more than 0.1', async () => {
