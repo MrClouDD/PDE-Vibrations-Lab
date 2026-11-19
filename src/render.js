@@ -6,6 +6,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/+esm';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js/+esm';
 import { RoomEnvironment } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/environments/RoomEnvironment.js/+esm';
 import { mergeGeometries } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js/+esm';
+import { MarchingCubes } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/MarchingCubes.js/+esm';
 
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -14,6 +15,7 @@ export function createView(canvas) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); // ponytail: 2x DPR quadrupled fill cost for little visible gain
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.localClippingEnabled = true; // the equipotential view clips an octant open
   const scene = new THREE.Scene();
   // Soft studio reflections for the glossy surfaces.
   scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
@@ -441,23 +443,55 @@ function latticeParts(p, opts, isCyl) {
   return { parts, extras, dir: [1, 0.5, 1.2] };
 }
 
-// Rippling shells: nested spheres (cylinder: coaxial tubes) at fixed fractions of the radius, each pushed
-// in or out along the radius by u and colored by u. Radial problems pulse like nested bubbles; others
-// wobble and ripple in 3D. A wedge toward the starting camera is left open so the inner shells show.
-function shellParts(p, opts, isCyl) {
-  const c = p.c, L = isCyl ? p.L : 0, parts = [];
-  const A0 = Math.PI / 2, A1 = 2 * Math.PI; // open wedge 0 < angle < π/2 faces the camera
-  for (const f of [0.2, 0.4, 0.6, 0.8]) {
-    parts.push(gridPart({
-      nu: isCyl ? 40 : 56, nv: 112, amp: 0.08 * c, group: 'shell',
-      material: surfaceMat({ transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }),
-      coordAt: isCyl
-        ? (i, j) => [f * c, A0 + ((A1 - A0) * j) / 112, (L * i) / 40]
-        : (i, j) => [f * c, (Math.PI * i) / 56, A0 + ((A1 - A0) * j) / 112],
-      place: isCyl ? (k, v, s) => cyl(k[0] + s * v, k[1], k[2], L) : (k, v, s) => sph(k[0] + s * v, k[1], k[2]),
-    }));
+// Equipotential surfaces: the level sets u = ±0.2, ±0.45, ±0.75 of the peak, found by marching cubes on a
+// grid through the body. For a radial problem they are concentric spheres that grow, shrink, appear and
+// vanish as the wave moves; otherwise they bend. Red levels are u > 0, blue u < 0. The octant toward the
+// starting camera is clipped away (no caps) so the nested surfaces show.
+const ISO_LEVELS = [-0.75, -0.45, -0.2, 0.2, 0.45, 0.75];
+function isoParts(p, opts, isCyl) {
+  const c = p.c, L = isCyl ? p.L : 0, n = 48, h = n / 2, R = 0.82; // body fills |f| ≤ R of the cube's field
+  const sx = c / R, sy = isCyl ? L / 2 / R : c / R;
+  // Grid points inside the body, in shape coordinates; the rest of the field stays 0 (as u is on a fixed wall).
+  const coords = [], cell = [];
+  for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const X = ((x - h) / h) * sx, Y = ((y - h) / h) * sy, Z = ((z - h) / h) * sx;
+    if (isCyl) {
+      const r = Math.hypot(X, Z);
+      if (r <= c && Math.abs(Y) <= L / 2) { coords.push([r, Math.atan2(Z, X), Y + L / 2]); cell.push(x + y * n + z * n * n); }
+    } else {
+      const r = Math.hypot(X, Y, Z);
+      if (r <= c) { coords.push([r, r ? Math.acos(Y / r) : 0, Math.atan2(Z, X)]); cell.push(x + y * n + z * n * n); }
+    }
   }
+  const clip = [new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0), new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)];
+  const group = new THREE.Group(), rgb = [0, 0, 0];
+  const surfaces = ISO_LEVELS.map(level => {
+    cmap(level, rgb, 0);
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2]), roughness: 0.3, clearcoat: 0.4, envMapIntensity: 0.4,
+      transparent: true, opacity: Math.abs(level) > 0.5 ? 0.7 : 0.4, depthWrite: false, side: THREE.DoubleSide,
+      clippingPlanes: clip, clipIntersection: true,
+    });
+    const mc = new MarchingCubes(n, mat, false, false, 60000);
+    mc.scale.set(sx, sy, sx);
+    mc.renderOrder = Math.abs(level) > 0.5 ? 1 : 2; // inner (stronger) levels drawn first
+    group.add(mc);
+    return { mc, level };
+  });
+  const part = {
+    object3D: group, coords, group: 'iso', amp: 1, value: u => u,
+    update(u, off, _s, vmax) {
+      for (const { mc, level } of surfaces) {
+        const f = mc.field;
+        f.fill(0);
+        for (let k = 0; k < cell.length; k++) f[cell[k]] = u[off + k];
+        mc.isolation = level * vmax;
+        mc.update();
+      }
+    },
+  };
   const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.03 * c, 1.03 * c, 1.01 * L, 96, 1) : new THREE.SphereGeometry(1.03 * c, 96, 64))];
+  const parts = [part];
   if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
   return { parts, extras, dir: [1, 0.6, 1.1] };
 }
@@ -584,7 +618,7 @@ export function buildMesh(shapeId, p, opts = {}) {
     : solid && (opts.view === 'pond' || opts.view === 'glass') ? pondParts(p, opts, isCyl)
     : solid && opts.view === 'cloud' ? cloudParts(p, opts, isCyl)
     : solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
-    : solid && opts.view === 'shells' ? shellParts(p, opts, isCyl)
+    : solid && opts.view === 'iso' ? isoParts(p, opts, isCyl)
       : BUILDERS[shapeId](p, opts);
   const group = new THREE.Group();
   const coords = [], offs = [];
