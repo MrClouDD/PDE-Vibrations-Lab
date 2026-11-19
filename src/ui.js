@@ -18,7 +18,9 @@ const view = createView($('stage'));
 const state = {
   eqn: 'wave', shape: 'sphere', bc: 'fixed', preset: 'book11', f: '1 - r/c', g: '0', us: 0, bcv: {}, F: '',
   params: { ...SHAPES.sphere.defaults }, N: 30, explore: false, idx: [], t: 0, speed: 0.5, playing: true,
-  gain: 1, showString: true, view: 'lattice', psi: 0,
+  gain: 1, showString: true, view: 'wavesph',
+  // Look of each view, adjustable from the View panel (see VIS_CONTROLS).
+  vis: { shells: 6, rings: 28, dot: 1, arrowN: 7.5, arrowSize: 1, corner: true, axis: 'x', angle: 0, thick: 1, wire: false, detail: 1 },
 };
 let sol = null, mesh = null;
 // Last formulas that compiled, so a typo never strands a freshly rebuilt mesh without a solution.
@@ -102,6 +104,64 @@ function shapeChanged() {
   rebuild(true);
 }
 
+// View settings: sliders and options for the current view (solids) or shape. Each change rebuilds the
+// mesh (keeping the camera) after a short pause, so dragging a slider stays smooth.
+const VIS_CONTROLS = {
+  wavesph: [
+    { key: 'shells', label: 'Number of shells', min: 2, max: 10, step: 1 },
+    { key: 'rings', label: 'Latitude rings (outer shell)', min: 8, max: 60, step: 1 },
+    { key: 'dot', label: 'Dot size', min: 0.4, max: 3, step: 0.1, fmt: v => `${v.toFixed(1)}×` },
+  ],
+  lattice: [
+    { key: 'arrowN', label: 'Arrows per radius (spacing)', min: 4, max: 12, step: 0.5 },
+    { key: 'arrowSize', label: 'Arrow size', min: 0.3, max: 2.5, step: 0.1, fmt: v => `${v.toFixed(1)}×` },
+    { key: 'corner', label: 'Cut a corner open to see inside', type: 'check' },
+  ],
+  glass: [
+    { key: 'axis', label: 'Turn the slice about the', type: 'select', options: [['x', 'x axis'], ['y', 'y axis (vertical)'], ['z', 'z axis']] },
+    { key: 'angle', label: 'Slice angle', min: 0, max: 180, step: 1, fmt: v => `${v}°` },
+  ],
+  string: [{ key: 'thick', label: 'String thickness', min: 0.3, max: 4, step: 0.1, fmt: v => `${v.toFixed(1)}×` }],
+  surface: [
+    { key: 'detail', label: 'Surface detail', min: 0.5, max: 2, step: 0.25, fmt: v => `${v.toFixed(2)}×` },
+    { key: 'wire', label: 'Show as a wire mesh', type: 'check' },
+  ],
+};
+let visTimer;
+const visChanged = () => { clearTimeout(visTimer); visTimer = setTimeout(() => rebuild(false), 150); };
+function renderVis(solid) {
+  const list = solid ? VIS_CONTROLS[state.view] ?? [] : state.shape === 'string' ? VIS_CONTROLS.string : VIS_CONTROLS.surface;
+  $('vis').replaceChildren(...list.map(cfg => {
+    const v = state.vis[cfg.key], id = `vis-${cfg.key}`;
+    if (cfg.type === 'check') {
+      const lab = document.createElement('label');
+      lab.className = 'check';
+      lab.innerHTML = `<input id="${id}" type="checkbox"${v ? ' checked' : ''}> <span>${cfg.label}</span>`;
+      lab.querySelector('input').addEventListener('change', e => { state.vis[cfg.key] = e.target.checked; visChanged(); });
+      return lab;
+    }
+    if (cfg.type === 'select') {
+      const lab = document.createElement('label');
+      lab.innerHTML = `<span>${cfg.label}</span><select id="${id}"></select>`;
+      const sel = lab.querySelector('select');
+      opt(sel, cfg.options, v);
+      sel.addEventListener('change', e => { state.vis[cfg.key] = e.target.value; visChanged(); });
+      return lab;
+    }
+    const box = document.createElement('div');
+    box.className = 'stack';
+    const show = x => (cfg.fmt ? cfg.fmt(x) : String(x));
+    box.innerHTML = `<label for="${id}"><span>${cfg.label}</span></label>`
+      + `<div class="row"><input id="${id}" type="range" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="${v}"><output>${show(v)}</output></div>`;
+    box.querySelector('input').addEventListener('input', e => {
+      state.vis[cfg.key] = +e.target.value;
+      box.querySelector('output').textContent = show(+e.target.value);
+      visChanged();
+    });
+    return box;
+  }));
+}
+
 function syncControls() {
   const S = SHAPES[state.shape], wave = state.eqn === 'wave', lap = state.eqn === 'laplace';
   opt($('eqn'), [['wave', 'Wave equation'], ['heat', 'Heat equation (bonus)'],
@@ -177,10 +237,10 @@ function syncControls() {
     : wave ? 'Your own problem' : lap ? "Laplace's equation (bonus)" : 'Heat equation (bonus)')
     + (wave && state.explore ? ' · showing one standing wave' : '');
   const solid = state.shape === 'sphere' || state.shape === 'cylinder';
-  const withString = state.shape === 'sphere' && state.view !== 'slice' && wave;
-  $('view-row').hidden = !solid;
+  const withString = state.shape === 'sphere' && wave;
+  $('view-pick').hidden = !solid;
   $('view').value = state.view;
-  $('psi-row').hidden = state.view !== 'slice';
+  renderVis(solid);
   $('string-row').hidden = $('string-note').hidden = !withString;
   $('legend-note').textContent = withString && state.showString ? '· right: string v = r·u' : '';
 }
@@ -227,7 +287,7 @@ function boundarySpec(p) {
 
 function rebuild(refit) {
   const showString = state.showString && state.eqn === 'wave';
-  mesh = buildMesh(state.shape, state.params, { showString, view: state.view, psi: (state.psi * Math.PI) / 180 });
+  mesh = buildMesh(state.shape, state.params, { showString, view: state.view, vis: state.vis });
   view.setObject(mesh.object3D, refit, mesh.dir);
   solve();
 }
@@ -382,11 +442,6 @@ $('speed').addEventListener('input', e => { state.speed = +e.target.value; $('sp
 $('gain').addEventListener('input', e => { state.gain = +e.target.value; });
 $('scrub').addEventListener('input', e => { state.t = +e.target.value; });
 $('view').addEventListener('change', e => { state.view = e.target.value; syncControls(); rebuild(true); });
-let psiTimer;
-$('psi').addEventListener('input', e => {
-  state.psi = +e.target.value; $('psi-out').textContent = `${state.psi}°`;
-  clearTimeout(psiTimer); psiTimer = setTimeout(() => rebuild(false), 60);
-});
 $('show-string').addEventListener('change', e => { state.showString = e.target.checked; syncControls(); rebuild(true); });
 
 // A book problem or demo, on any shape: start clean (that shape's defaults, 30 terms) and load it; the view stays.

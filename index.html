@@ -149,15 +149,12 @@
 
     <fieldset id="view-row">
       <legend>View</legend>
-      <label><span>Show the inside as</span>
-        <select id="view"><option value="lattice">Arrow field: arrows throughout the solid, pointing out where u &gt; 0 and in where u &lt; 0</option><option value="iso">Equipotential surfaces: where u = ±0.2, ±0.45, ±0.75 of its peak</option><option value="wavesph">Wave spheres: nested spheres of glowing dots, each dot pushed along the radius by u</option><option value="glass">Glass ball: the rippling middle slice inside the clear solid</option><option value="pond">Ripple pond: slice through the middle, u as height</option><option value="cloud">Glowing particle cloud: the whole solid, lit by |u|</option><option value="slice">One slice through the axis</option></select>
+      <label id="view-pick"><span>Show the inside as</span>
+        <select id="view"><option value="wavesph">Wave spheres: nested shells of dots, each dot pushed along the radius by u</option><option value="lattice">Arrow field: arrows pointing out where u &gt; 0 and in where u &lt; 0</option><option value="glass">Glass ball: a rippling slice through the middle of the clear solid</option></select>
       </label>
-      <div id="psi-row" hidden>
-        <label for="psi"><span>Slice angle</span></label>
-        <div class="row"><input id="psi" type="range" min="0" max="180" step="1" value="0"><output id="psi-out">0°</output></div>
-      </div>
+      <div id="vis" class="stack"></div>
       <label class="check" id="string-row"><input id="show-string" type="checkbox" checked> <span>Show the equivalent string v = r·u</span></label>
-      <p class="note" id="string-note">With v = r·u the sphere equation becomes the string equation v<sub>tt</sub> = a²v<sub>rr</sub> with v(0) = v(c) = 0. In the arrow field each arrow starts at its grid point and points along the radius, outward where u &gt; 0 and inward where u &lt; 0, with length |u|; at the wall they vanish because u(c, t) = 0.</p>
+      <p class="note" id="string-note">With v = r·u the sphere equation becomes the string equation v<sub>tt</sub> = a²v<sub>rr</sub> with v(0) = v(c) = 0. Red is u &gt; 0, blue u &lt; 0. Nothing moves at the wall because u(c, t) = 0.</p>
     </fieldset>
 
     <details id="explore-row">

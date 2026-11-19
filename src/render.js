@@ -6,7 +6,6 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/+esm';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js/+esm';
 import { RoomEnvironment } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/environments/RoomEnvironment.js/+esm';
 import { mergeGeometries } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js/+esm';
-import { MarchingCubes } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/MarchingCubes.js/+esm';
 
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -15,7 +14,6 @@ export function createView(canvas) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); // ponytail: 2x DPR quadrupled fill cost for little visible gain
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.localClippingEnabled = true; // the equipotential view clips an octant open
   const scene = new THREE.Scene();
   // Soft studio reflections for the glossy surfaces.
   scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
@@ -212,37 +210,42 @@ function companionString(c, R, parts, extras, ink) {
   extras.push(lines([at(0, 0), at(c, 0)], ink, 0.4));
 }
 
-// Ripple pond: the horizontal slice through the middle (sphere equator, or cylinder mid-height),
-// drawn with u as height, so radial waves show up as rings that rush in and bounce out.
+// Glass ball: a slice through the middle, drawn with u as height off the slice, inside the clear solid.
+// vis.axis / vis.angle tilt the slice: it starts horizontal and turns about the x, y or z axis.
 function pondParts(p, opts, isCyl) {
-  const c = p.c, NR = 90, NA = 160, ink = new THREE.Color(css('--muted')), parts = [], extras = [];
-  parts.push(gridPart({
+  const c = p.c, L = isCyl ? p.L : 0, vis = opts.vis || {}, NR = 90, NA = 160, ink = new THREE.Color(css('--muted'));
+  const ang = ((vis.angle ?? 0) * Math.PI) / 180, axis = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[vis.axis || 'x'];
+  const R = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(...axis), ang);
+  const rot = v => new THREE.Vector3(...v).applyMatrix4(R).toArray();
+  const e1 = rot([1, 0, 0]), e2 = rot([0, 0, -1]), n = rot([0, 1, 0]);
+  // A tilted slice of the cylinder must stay inside it: radius min(c, L/2) once it leaves the horizontal.
+  const rho = isCyl && Math.abs(n[1]) < 0.999 ? Math.min(c, L / 2) : c;
+  const toShape = q => {
+    if (isCyl) return [Math.hypot(q[0], q[2]), Math.atan2(q[2], q[0]), q[1] + L / 2];
+    const r = Math.hypot(...q);
+    return [r, r ? Math.acos(Math.max(-1, Math.min(1, q[1] / r))) : 0, Math.atan2(q[2], q[0])];
+  };
+  const toWorld = k => (isCyl ? cyl(k[0], k[1], k[2], L) : sph(k[0], k[1], k[2]));
+  const parts = [gridPart({
     nu: NR, nv: NA, amp: 0.5 * c, material: surfaceMat(),
-    coordAt: (i, j) => { const r = (c * i) / NR, a = (2 * Math.PI * j) / NA; return isCyl ? [r, a, p.L / 2] : [r, Math.PI / 2, a]; },
-    place: (k, v, s) => { const a = isCyl ? k[1] : k[2]; return [k[0] * Math.cos(a), s * v, -k[0] * Math.sin(a)]; },
-  }));
-  const rim = [];
-  for (let j = 0; j < NA; j++) {
-    const a = (2 * Math.PI * j) / NA, b = (2 * Math.PI * (j + 1)) / NA;
-    rim.push([c * Math.cos(a), 0, -c * Math.sin(a)], [c * Math.cos(b), 0, -c * Math.sin(b)]);
-  }
-  extras.push(lines(rim, ink, 0.6));
+    coordAt: (i, j) => {
+      const r = (rho * i) / NR, a = (2 * Math.PI * j) / NA;
+      return toShape([0, 1, 2].map(d => r * (Math.cos(a) * e1[d] + Math.sin(a) * e2[d])));
+    },
+    place: (k, v, s) => { const q = toWorld(k); return [q[0] + s * v * n[0], q[1] + s * v * n[1], q[2] + s * v * n[2]]; },
+  })];
+  const rim = [], at = a => [0, 1, 2].map(d => rho * (Math.cos(a) * e1[d] + Math.sin(a) * e2[d]));
+  for (let j = 0; j < NA; j++) rim.push(at((2 * Math.PI * j) / NA), at((2 * Math.PI * (j + 1)) / NA));
+  const extras = [lines(rim, ink, 0.6)];
   if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, ink);
-  if (opts.view === 'glass') {
-    // The rippling slice sits inside a clear glass body: the transparent solid with its waves showing through.
-    extras.push(glassShell(isCyl
-      ? new THREE.CylinderGeometry(1.02 * c, 1.02 * c, p.L, 96, 1)
-      : new THREE.SphereGeometry(1.02 * c, 96, 64)));
-    return { parts, extras, dir: [1, 0.62, 1.2] };
-  }
-  return { parts, extras, dir: [1, 0.45, 1.2] };
+  extras.push(glassShell(isCyl ? new THREE.CylinderGeometry(1.02 * c, 1.02 * c, L, 96, 1) : new THREE.SphereGeometry(1.02 * c, 96, 64)));
+  return { parts, extras, dir: [1, 0.62, 1.2] };
 }
 
 
-// Glowing particle cloud, after the dot-field style of acoustics animations (e.g. Russell/Sparrow):
-// points fill the solid, glow larger and brighter where |u| is large, colored by sign, and drift
-// slightly along the radius with u. Additive blending on a dark stage makes wavefronts read as light.
-const CLOUD_VERT = `
+// Crisp, opaque round dots (wave spheres), sized in world units and a little larger and brighter where
+// |u| is large; each dot reads separately instead of glows adding up.
+const DOT_VERT = `
   attribute float glow; attribute vec3 color; varying vec3 vColor; varying float vGlow;
   uniform float scale; uniform float base; uniform float grow;
   void main() {
@@ -251,16 +254,6 @@ const CLOUD_VERT = `
     gl_PointSize = (base + grow * glow) * scale / -mv.z;
     gl_Position = projectionMatrix * mv;
   }`;
-const CLOUD_FRAG = `
-  varying vec3 vColor; varying float vGlow; uniform float opacity;
-  void main() {
-    vec2 d = gl_PointCoord - 0.5; float r2 = dot(d, d);
-    if (r2 > 0.25) discard;
-    float a = exp(-r2 * 10.0) * opacity * (0.3 + 0.9 * vGlow);
-    gl_FragColor = vec4(vColor * a, a);
-  }`;
-
-// Crisp, opaque round dots (wave spheres): each dot reads separately instead of glows adding up.
 const DOT_FRAG = `
   varying vec3 vColor; varying float vGlow;
   void main() {
@@ -269,22 +262,18 @@ const DOT_FRAG = `
     gl_FragColor = vec4(pow(vColor, vec3(1.0 / 2.2)) * (0.75 + 0.5 * vGlow) * (1.0 - 1.2 * r2), 1.0);
   }`;
 
-// minGlow keeps quiet points visible; crisp draws opaque dots of base size `base` (wave spheres).
-function pointsPart({ coords, place, amp, group = 'cloud', minGlow = 0, crisp = false, base = 0.03, grow = 0.1 }) {
+// minGlow keeps quiet points visible; dots are `base` + `grow`·glow world units across.
+function pointsPart({ coords, place, amp, group = 'cloud', minGlow = 0, base = 0.03, grow = 0.1 }) {
   const n = coords.length, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), glow = new Float32Array(n);
   coords.forEach((c, k) => pos.set(place(c, 0, 0), k * 3));
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
-  const dark = new THREE.Color(css('--stage')).getHSL({}).l < 0.5;
-  const uniforms = { scale: { value: 900 * (devicePixelRatio || 1) }, opacity: { value: dark ? 0.9 : 1 }, base: { value: base }, grow: { value: grow } };
-  const mat = crisp
-    ? new THREE.ShaderMaterial({ vertexShader: CLOUD_VERT, fragmentShader: DOT_FRAG, uniforms })
-    : new THREE.ShaderMaterial({
-      vertexShader: CLOUD_VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
-      blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending, uniforms,
-    });
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: DOT_VERT, fragmentShader: DOT_FRAG,
+    uniforms: { scale: { value: 900 * (devicePixelRatio || 1) }, base: { value: base }, grow: { value: grow } },
+  });
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
   return {
@@ -303,8 +292,6 @@ function pointsPart({ coords, place, amp, group = 'cloud', minGlow = 0, crisp = 
   };
 }
 
-// Deterministic pseudo-random so the cloud is the same on every rebuild.
-function rng(seed) { return () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
 
 // Glass shell: a clear, glossy body plus a Fresnel rim glow, so the solid reads as one object
@@ -380,11 +367,12 @@ function arrowPart({ coords, place, dir, amp, group = 'arrows' }) {
 // radius (cylinder: away from the axis), outward for u > 0, inward for u < 0, length |u|. A fixed wall
 // shows no arrows because u = 0 there. The scalar u is drawn along the radius — a picture of u.
 function latticeParts(p, opts, isCyl) {
-  const c = p.c, L = isCyl ? p.L : 0, h = c / 7.5, coords = [];
+  // vis.arrowN: grid steps per radius (arrow spacing); vis.arrowSize: arrow length scale; vis.corner: cut a corner open.
+  const vis = opts.vis || {}, c = p.c, L = isCyl ? p.L : 0, h = c / (vis.arrowN ?? 7.5), coords = [], corner = vis.corner ?? true;
   const span = isCyl ? Math.max(c, L / 2) : c;
   for (let x = -span; x <= span + 1e-9; x += h) for (let y = -span; y <= span + 1e-9; y += h) for (let z = -span; z <= span + 1e-9; z += h) {
-    // Leave out the octant facing the starting camera so the center is in view (the glass stays whole).
-    if (x > 1e-9 && y > 1e-9 && z > 1e-9) continue;
+    // Optionally leave out the octant facing the starting camera so the center is in view (the glass stays whole).
+    if (corner && x > 1e-9 && y > 1e-9 && z > 1e-9) continue;
     if (isCyl) {
       const r = Math.hypot(x, z);
       if (r <= c * 0.999 && Math.abs(y) <= L / 2) coords.push([r, Math.atan2(z, x), y + L / 2]);
@@ -396,73 +384,23 @@ function latticeParts(p, opts, isCyl) {
   const place = isCyl ? k => cyl(k[0], k[1], k[2], L) : k => sph(k[0], k[1], k[2]);
   // Outward unit vector (cylinder: away from the axis); the center point has none and is never drawn.
   const dir = isCyl ? k => (k[0] ? [Math.cos(k[1]), 0, Math.sin(k[1])] : [0, 0, 0]) : k => (k[0] ? sph(1, k[1], k[2]) : [0, 0, 0]);
-  // Full-size arrowhead ~0.8 grid steps long, so neighbors don't overlap.
-  const parts = [arrowPart({ coords, place, dir, amp: 0.8 * h, group: 'lattice' })];
+  // Full-size arrow ~0.8 grid steps long at size 1, so neighbors don't overlap.
+  const parts = [arrowPart({ coords, place, dir, amp: 0.8 * h * (vis.arrowSize ?? 1), group: 'lattice' })];
   const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.04 * c, 1.04 * c, 1.02 * L, 96, 1) : new THREE.SphereGeometry(1.04 * c, 96, 64))];
   if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
   return { parts, extras, dir: [1, 0.5, 1.2] };
 }
 
-// Equipotential surfaces: the level sets u = ±0.2, ±0.45, ±0.75 of the peak, found by marching cubes on a
-// grid through the body. For a radial problem they are concentric spheres that grow, shrink, appear and
-// vanish as the wave moves; otherwise they bend. Red levels are u > 0, blue u < 0. The octant toward the
-// starting camera is clipped away (no caps) so the nested surfaces show.
-const ISO_LEVELS = [-0.75, -0.45, -0.2, 0.2, 0.45, 0.75];
-function isoParts(p, opts, isCyl) {
-  const c = p.c, L = isCyl ? p.L : 0, n = 48, h = n / 2, R = 0.82; // body fills |f| ≤ R of the cube's field
-  const sx = c / R, sy = isCyl ? L / 2 / R : c / R;
-  // Grid points inside the body, in shape coordinates; the rest of the field stays 0 (as u is on a fixed wall).
-  const coords = [], cell = [];
-  for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    const X = ((x - h) / h) * sx, Y = ((y - h) / h) * sy, Z = ((z - h) / h) * sx;
-    if (isCyl) {
-      const r = Math.hypot(X, Z);
-      if (r <= c && Math.abs(Y) <= L / 2) { coords.push([r, Math.atan2(Z, X), Y + L / 2]); cell.push(x + y * n + z * n * n); }
-    } else {
-      const r = Math.hypot(X, Y, Z);
-      if (r <= c) { coords.push([r, r ? Math.acos(Y / r) : 0, Math.atan2(Z, X)]); cell.push(x + y * n + z * n * n); }
-    }
-  }
-  const clip = [new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0), new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)];
-  const group = new THREE.Group(), rgb = [0, 0, 0];
-  const surfaces = ISO_LEVELS.map(level => {
-    cmap(level, rgb, 0);
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2]), roughness: 0.3, clearcoat: 0.4, envMapIntensity: 0.4,
-      transparent: true, opacity: Math.abs(level) > 0.5 ? 0.7 : 0.4, depthWrite: false, side: THREE.DoubleSide,
-      clippingPlanes: clip, clipIntersection: true,
-    });
-    const mc = new MarchingCubes(n, mat, false, false, 60000);
-    mc.scale.set(sx, sy, sx);
-    mc.renderOrder = Math.abs(level) > 0.5 ? 1 : 2; // inner (stronger) levels drawn first
-    group.add(mc);
-    return { mc, level };
-  });
-  const part = {
-    object3D: group, coords, group: 'iso', amp: 1, value: u => u,
-    update(u, off, _s, vmax) {
-      for (const { mc, level } of surfaces) {
-        const f = mc.field;
-        f.fill(0);
-        for (let k = 0; k < cell.length; k++) f[cell[k]] = u[off + k];
-        mc.isolation = level * vmax;
-        mc.update();
-      }
-    },
-  };
-  const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.03 * c, 1.03 * c, 1.01 * L, 96, 1) : new THREE.SphereGeometry(1.03 * c, 96, 64))];
-  const parts = [part];
-  if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
-  return { parts, extras, dir: [1, 0.6, 1.1] };
-}
 
 // Wave spheres (after "3D wave spheres" dot-art): nested spheres of glowing dots on latitude rings
 // (cylinder: nested tubes), each dot pushed along the radius by u and colored/glowing by u. The dots
 // are see-through, so every shell's ripple shows at once without cutting anything away.
 function waveSphereParts(p, opts, isCyl) {
-  const c = p.c, L = isCyl ? p.L : 0, coords = [];
-  for (const f of [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) {
-    const r = f * c, rings = Math.round(8 + 22 * f), step = Math.PI * r / rings; // ~even dot spacing
+  // vis.shells: how many nested shells; vis.rings: latitude rings on the outermost shell (inner shells
+  // get proportionally fewer, keeping the dot spacing even); vis.dot: dot size scale.
+  const vis = opts.vis || {}, c = p.c, L = isCyl ? p.L : 0, coords = [], nS = vis.shells ?? 6, R = vis.rings ?? 28;
+  for (let k = 1; k <= nS; k++) {
+    const f = (0.9 * k) / nS, r = f * c, rings = Math.max(4, Math.round((R * f) / 0.9)), step = (Math.PI * r) / rings;
     if (isCyl) {
       const nz = Math.round(L / step), na = Math.round((2 * Math.PI * r) / step);
       for (let i = 0; i <= nz; i++) for (let j = 0; j < na; j++) coords.push([r, (2 * Math.PI * j) / na, (L * i) / nz]);
@@ -474,46 +412,30 @@ function waveSphereParts(p, opts, isCyl) {
     }
   }
   const place = isCyl ? (k, v, s) => cyl(k[0] + s * v, k[1], k[2], L) : (k, v, s) => sph(k[0] + s * v, k[1], k[2]);
-  const parts = [pointsPart({ coords, place, amp: 0.06 * c, group: 'cloud', minGlow: 0.3, crisp: true, base: 0.009 * c, grow: 0.006 * c })];
+  const d = vis.dot ?? 1;
+  const parts = [pointsPart({ coords, place, amp: 0.06 * c, group: 'cloud', minGlow: 0.3, base: 0.009 * c * d, grow: 0.006 * c * d })];
   parts[0].object3D.renderOrder = 1;
   const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.03 * c, 1.03 * c, 1.01 * L, 96, 1) : new THREE.SphereGeometry(1.03 * c, 96, 64))];
   if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
   return { parts, extras, dir: [1, 0.5, 1.2] };
 }
 
-function cloudParts(p, opts, isCyl) {
-  const c = p.c, L = isCyl ? p.L : 0, rand = rng(7), coords = [], N = 9000;
-  for (let k = 0; k < N; k++) {
-    if (isCyl) coords.push([c * Math.sqrt(rand()), 2 * Math.PI * rand(), L * rand()]);
-    else coords.push([c * Math.cbrt(rand()), Math.acos(1 - 2 * rand()), 2 * Math.PI * rand()]);
-  }
-  const place = isCyl
-    ? (k, v, s) => cyl(k[0] + s * v, k[1], k[2], L)
-    : (k, v, s) => sph(k[0] + s * v, k[1], k[2]);
-  const parts = [pointsPart({ coords, place, amp: 0.05 * c })];
-  parts[0].object3D.renderOrder = 1;
-  const ink = new THREE.Color(css('--muted')), seg = [], ring = fn => { for (let i = 0; i < 96; i++) seg.push(fn(i / 96), fn((i + 1) / 96)); };
-  if (isCyl) for (const y of [0, L]) ring(t => cyl(c, 2 * Math.PI * t, y, L));
-  else for (const ax of [0, 1]) ring(t => { const a = 2 * Math.PI * t; return ax ? [c * Math.cos(a), 0, c * Math.sin(a)] : [c * Math.cos(a), c * Math.sin(a), 0]; });
-  const extras = [lines(seg, ink, 0.3)];
-  if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, ink);
-  return { parts, extras, dir: [1, 0.55, 1.2] };
-}
 
-function stringParts(p) {
+function stringParts(p, opts = {}) {
   const L = p.L, n = 240, ink = new THREE.Color(css('--muted'));
   const parts = [tubePart({
-    n, radius: 0.012 * L, amp: 0.22 * L,
+    n, radius: 0.012 * L * (opts.vis?.thick ?? 1), amp: 0.22 * L,
     coordAt: i => [(L * i) / (n - 1)],
     place: (k, v, s) => [k[0] - L / 2, s * v, 0],
   })];
   return { parts, extras: [lines([[-L / 2, 0, 0], [L / 2, 0, 0]], ink, 0.35)], dir: [0.12, 0.3, 1] };
 }
 
-function diskParts(p) {
-  const c = p.c, ink = new THREE.Color(css('--muted')), NR = 64, NT = 128;
+function diskParts(p, opts = {}) {
+  const vis = opts.vis || {}, q = vis.detail ?? 1;
+  const c = p.c, ink = new THREE.Color(css('--muted')), NR = Math.round(64 * q), NT = Math.round(128 * q);
   const parts = [gridPart({
-    nu: NR, nv: NT, amp: 0.28 * c, material: surfaceMat(),
+    nu: NR, nv: NT, amp: 0.28 * c, material: surfaceMat({ wireframe: !!vis.wire }),
     coordAt: (i, j) => [(c * i) / NR, (2 * Math.PI * j) / NT],
     place: (k, v, s) => [k[0] * Math.cos(k[1]), s * v, -k[0] * Math.sin(k[1])],
   })];
@@ -525,10 +447,11 @@ function diskParts(p) {
   return { parts, extras: [lines(rim, ink, 0.6)], dir: [0.9, 0.85, 1.3] };
 }
 
-function rectParts(p) {
-  const { Lx, Ly } = p, ink = new THREE.Color(css('--muted')), NX = 96, NY = Math.max(16, Math.round((96 * Ly) / Lx));
+function rectParts(p, opts = {}) {
+  const vis = opts.vis || {}, NX = Math.round(96 * (vis.detail ?? 1));
+  const { Lx, Ly } = p, ink = new THREE.Color(css('--muted')), NY = Math.max(8, Math.round((NX * Ly) / Lx));
   const parts = [gridPart({
-    nu: NX, nv: NY, amp: 0.2 * Math.max(Lx, Ly), material: surfaceMat(),
+    nu: NX, nv: NY, amp: 0.2 * Math.max(Lx, Ly), material: surfaceMat({ wireframe: !!vis.wire }),
     coordAt: (i, j) => [(Lx * i) / NX, (Ly * j) / NY],
     place: (k, v, s) => [k[0] - Lx / 2, s * v, Ly / 2 - k[1]],
   })];
@@ -542,43 +465,15 @@ const cyl = (r, th, z, L) => [r * Math.cos(th), z - L / 2, r * Math.sin(th)];
 
 // Slice view: one plane through the vertical axis at azimuth psi, displaced along its normal by u.
 // The two halves of the plane (s > 0 and s < 0) map to azimuths psi and psi + π.
-function sliceParts(p, opts, isCyl) {
-  const psi = opts.psi ?? 0, n = [-Math.sin(psi), 0, Math.cos(psi)], ink = new THREE.Color(css('--muted'));
-  const c = p.c, L = isCyl ? p.L : 0;
-  const toShape = (sv, h) => {
-    const az = sv >= 0 ? psi : psi + Math.PI, r = Math.abs(sv);
-    return isCyl ? [r, az, h + L / 2] : [Math.hypot(sv, h), Math.atan2(r, h), az];
-  };
-  const NU = 80, NV = isCyl ? Math.max(40, Math.round((80 * L) / (2 * c))) : 80;
-  const coordAt = isCyl
-    ? (i, j) => toShape(-c + (2 * c * i) / NU, -L / 2 + (L * j) / NV)
-    : (i, j) => { const rho = (c * i) / NU, a = (2 * Math.PI * j) / NV; return toShape(rho * Math.sin(a), rho * Math.cos(a)); };
-  const world = k => {
-    const sv = Math.abs(((k[isCyl ? 1 : 2] - psi) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)) < 1 ? 1 : -1;
-    const r = isCyl ? k[0] : k[0] * Math.sin(k[1]), h = isCyl ? k[2] - L / 2 : k[0] * Math.cos(k[1]);
-    return [sv * r * Math.cos(psi), h, sv * r * Math.sin(psi)];
-  };
-  const parts = [gridPart({
-    nu: NU, nv: NV, amp: 0.22 * c, material: surfaceMat(), coordAt,
-    place: (k, v, s) => { const q = world(k); return [q[0] + s * v * n[0], q[1], q[2] + s * v * n[2]]; },
-  })];
-  const seg = [], ring = (fn, m = 96) => { for (let i = 0; i < m; i++) seg.push(fn(i / m), fn((i + 1) / m)); };
-  if (isCyl) for (const y of [-L / 2, L / 2]) ring(t => [c * Math.cos(2 * Math.PI * t), y, c * Math.sin(2 * Math.PI * t)]);
-  else for (const ax of [0, 1]) ring(t => { const a = 2 * Math.PI * t; return ax ? [c * Math.cos(a), 0, c * Math.sin(a)] : [c * Math.cos(a) * Math.cos(psi), c * Math.sin(a), c * Math.cos(a) * Math.sin(psi)]; });
-  return { parts, extras: [lines(seg, ink, 0.35)], dir: [0.6, 0.5, 1.5] };
-}
 
 const BUILDERS = { string: stringParts, disk: diskParts, rect: rectParts };
 
 export function buildMesh(shapeId, p, opts = {}) {
   const solid = shapeId === 'sphere' || shapeId === 'cylinder', isCyl = shapeId === 'cylinder';
-  const { parts, extras, dir } = solid && opts.view === 'slice' ? sliceParts(p, opts, isCyl)
-    : solid && (opts.view === 'pond' || opts.view === 'glass') ? pondParts(p, opts, isCyl)
-    : solid && opts.view === 'cloud' ? cloudParts(p, opts, isCyl)
-    : solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
-    : solid && opts.view === 'iso' ? isoParts(p, opts, isCyl)
-    : solid && opts.view === 'wavesph' ? waveSphereParts(p, opts, isCyl)
-    : solid ? latticeParts(p, opts, isCyl) // the arrow field is the default for solids
+  // Solids: arrow field, glass ball (rotatable middle slice), or wave spheres (the default).
+  const { parts, extras, dir } = solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
+    : solid && opts.view === 'glass' ? pondParts(p, opts, isCyl)
+    : solid ? waveSphereParts(p, opts, isCyl)
       : BUILDERS[shapeId](p, opts);
   const group = new THREE.Group();
   const coords = [], offs = [];
