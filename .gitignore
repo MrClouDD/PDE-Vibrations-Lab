@@ -1,0 +1,6 @@
+# The textbook is copyrighted: never publish it.
+*.pdf
+node_modules/
+.superpowers/
+*.code-workspace
+docs

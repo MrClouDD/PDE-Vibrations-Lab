@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vibrations Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+  /* Layout: a full-bleed 3D stage with a worked-example column on the right (stacked below on phones). */
+  :root {
+    --bg: #eef1f4; --panel: #ffffff; --fg: #15212c; --muted: #5d6c79; --rule: #d6dde3;
+    --accent: #0e6f6a; --warn: #9a5b00; --err: #b42318; --stage: #e9edf1; --paper: #f7f9fa;
+    --display: 'Space Grotesk', system-ui, sans-serif;
+    --body: 'IBM Plex Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1117; --panel: #111a22; --fg: #e3eaf0; --muted: #8fa0ae; --rule: #22303c;
+      --accent: #4fc1b6; --warn: #e8b04a; --err: #ff8a7a; --stage: #0d151c; --paper: #0d151c; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1117; --panel: #111a22; --fg: #e3eaf0; --muted: #8fa0ae; --rule: #22303c;
+    --accent: #4fc1b6; --warn: #e8b04a; --err: #ff8a7a; --stage: #0d151c; --paper: #0d151c; color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--body); }
+  .app { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 380px; }
+  .stage-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--stage); }
+  #stage { display: block; width: 100%; height: 100%; touch-action: none; }
+  .overlay { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: 16px; right: 16px; pointer-events: none; display: grid; gap: 4px; }
+  .overlay h1 { margin: 0; font: 700 22px/1.1 var(--display); letter-spacing: -0.01em; text-wrap: balance; }
+  .eq { font: 13px var(--body); color: var(--muted); overflow-wrap: anywhere; }
+  #period { font: 500 13px var(--mono); color: var(--accent); }
+  .legend { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); right: 16px; bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font: 12px var(--mono); color: var(--muted); pointer-events: none; }
+  .bar { width: 120px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgb(26,92,199), rgb(168,181,194), rgb(219,56,36)); }
+  .hint { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: 44px; margin: 0; padding: 6px 10px; border-radius: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--rule); font-size: 13px; pointer-events: none; transition: opacity 0.6s; }
+  .hint.gone { opacity: 0; }
+  aside { background: var(--panel); border-left: 1px solid var(--rule); overflow-y: auto; padding-block: 16px 24px; padding-left: 18px; padding-right: max(18px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 18px; min-width: 0; }
+  fieldset { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+  legend { padding: 0; margin-bottom: 4px; font: 600 11px var(--body); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  details { border-top: 1px solid var(--rule); padding-top: 12px; min-width: 0; }
+  summary { cursor: pointer; font: 600 14px var(--body); color: var(--fg); }
+  summary::marker { color: var(--accent); }
+  details > .stack { margin-top: 12px; }
+  label { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
+  label > span { font-size: 13px; }
+  select, input[type="number"], input[type="text"] {
+    font: 13px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 6px; padding: 7px 8px; min-width: 0; width: 100%; box-sizing: border-box;
+  }
+  #problem { font-size: 14px; padding: 9px 8px; }
+  input[type="text"] { font-family: var(--mono); }
+  .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+  .idx { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  #params { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  output, .val { font: 12px var(--mono); color: var(--muted); min-width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
+  button { font: 600 13px var(--body); color: var(--panel); background: var(--accent); border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .check { display: flex; gap: 8px; align-items: center; }
+  .check input { accent-color: var(--accent); }
+  .err { color: var(--err); font-size: 12px; min-height: 0; }
+  .err:empty, #warn:empty { display: none; }
+  #warn { color: var(--warn); font-size: 12px; }
+  .boot-error { position: absolute; left: 16px; right: 16px; top: 45%; margin: 0; text-align: center; color: var(--err); font-size: 14px; }
+  .note { color: var(--muted); font-size: 12px; margin: 0; }
+  .note code { font: 12px var(--mono); color: var(--fg); }
+  /* The worked example: numbered lines like the book, scrolling sideways inside if a formula is long. */
+  .paper { background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; min-width: 0; }
+  .paper h3 { margin: 4px 0 0; font: 600 11px var(--body); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .eqrow { display: grid; grid-template-columns: 2.2em minmax(0, 1fr); align-items: center; min-width: 0; }
+  .eqrow .tag { font: 12px var(--mono); color: var(--muted); }
+  .m { overflow-x: auto; overflow-y: hidden; min-width: 0; font-size: 13.5px; padding-block: 2px; text-align: left; scrollbar-width: thin; }
+  .m mjx-container { margin: 0 !important; }
+  .m.raw { font: 12px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  @media (max-width: 760px) {
+    html, body { height: auto; }
+    .app { grid-template-columns: minmax(0, 1fr); height: auto; }
+    .stage-wrap { height: 62svh; }
+    aside { border-left: 0; border-top: 1px solid var(--rule); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  }
+  /* MathJax's copy for screen readers: kept for them, hidden from view (MathJax's own rule, inlined). */
+  mjx-assistive-mml { position: absolute !important; top: 0; left: 0; clip: rect(1px, 1px, 1px, 1px); padding: 1px 0 0 0 !important; border: 0 !important; height: 1px !important; width: 1px !important; overflow: hidden !important; display: block !important; user-select: none; }
+  mjx-container { position: relative; }
+</style>
+
+<div class="app">
+  <div class="stage-wrap">
+    <canvas id="stage" aria-label="3D animation of the vibrating body. Drag to rotate, scroll or pinch to zoom."></canvas>
+    <div class="overlay">
+      <h1>Vibrations Lab</h1>
+      <div class="eq" id="eq"></div>
+      <div id="period"></div>
+    </div>
+    <p id="boot-error" class="boot-error" role="alert" hidden></p>
+    <p id="hint" class="hint">Drag to rotate · scroll or pinch to zoom</p>
+    <div class="legend"><span>u &lt; 0</span><span class="bar"></span><span>u &gt; 0</span><span id="legend-note"></span></div>
+  </div>
+
+  <aside>
+    <fieldset>
+      <legend>Problem</legend>
+      <label><span>Choose a problem</span><select id="problem"></select></label>
+      <div class="paper">
+        <div id="statement"></div>
+        <h3>Solution</h3>
+        <div id="solution"></div>
+        <h3 id="coefs-head">Computed coefficients</h3>
+        <div id="coefs"></div>
+      </div>
+      <div id="warn" role="status"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Playback</legend>
+      <div class="row"><button id="play" type="button">Pause</button><span class="val">t = <span id="t-out">0.00</span></span></div>
+      <label for="scrub"><span>Time t</span></label>
+      <input id="scrub" type="range" min="0" max="2" step="0.001" value="0" style="accent-color: var(--accent)">
+      <label for="speed"><span>Speed</span></label>
+      <div class="row"><input id="speed" type="range" min="0.05" max="2" step="0.05" value="0.5"><output id="speed-out">0.50×</output></div>
+      <label for="gain"><span>Exaggerate the motion</span></label>
+      <div class="row"><input id="gain" type="range" min="0" max="3" step="0.05" value="1"><span class="val"></span></div>
+      <label for="N"><span>Terms in the partial sum</span></label>
+      <div class="row"><input id="N" type="range" min="1" max="300" step="1" value="30"><output id="N-out">30</output></div>
+    </fieldset>
+
+    <fieldset id="view-row">
+      <legend>View</legend>
+      <label><span>Show the inside as</span>
+        <select id="view"><option value="lattice">Arrow field: arrows throughout the solid, pointing out where u &gt; 0 and in where u &lt; 0</option><option value="glass">Glass ball: the rippling middle slice inside the clear solid</option><option value="pond">Ripple pond: slice through the middle, u as height</option><option value="cloud">Glowing particle cloud: the whole solid, lit by |u|</option><option value="cutaway">Cut-away wedge with breathing shells</option><option value="slice">One slice through the axis</option></select>
+      </label>
+      <div id="psi-row" hidden>
+        <label for="psi"><span>Slice angle</span></label>
+        <div class="row"><input id="psi" type="range" min="0" max="180" step="1" value="0"><output id="psi-out">0°</output></div>
+      </div>
+      <label class="check" id="string-row"><input id="show-string" type="checkbox" checked> <span>Show the equivalent string v = r·u</span></label>
+      <p class="note" id="string-note">With v = r·u the sphere equation becomes the string equation v<sub>tt</sub> = a²v<sub>rr</sub> with v(0) = v(c) = 0. In the arrow field each arrow starts at its grid point and points along the radius, outward where u &gt; 0 and inward where u &lt; 0, with length |u|; at the wall they vanish because u(c, t) = 0.</p>
+    </fieldset>
+
+    <details id="explore-row">
+      <summary>Standing waves (normal modes)</summary>
+      <div class="stack">
+        <label class="check"><input id="explore" type="checkbox"> <span>Show one standing wave φ<sub>n</sub> cos ω<sub>n</sub>t instead of the full solution</span></label>
+        <div id="explore-idx" class="idx" hidden></div>
+        <p class="note" id="explore-info" hidden></p>
+      </div>
+    </details>
+
+    <details id="own">
+      <summary>Try your own problem</summary>
+      <div class="stack">
+        <label><span>Equation</span><select id="eqn"></select></label>
+        <label><span>Shape</span><select id="shape"></select></label>
+        <label id="bc-row"><span>Boundary condition</span><select id="bc"></select></label>
+        <div id="bcv" class="stack"></div>
+        <div class="err" id="bcv-err" role="alert"></div>
+        <p class="note" id="bcv-note" hidden></p>
+        <div id="params"></div>
+        <label><span>Start from an example</span><select id="preset"></select></label>
+        <label><span id="f-label">f initial shape</span><input id="f" type="text" spellcheck="false" autocomplete="off"></label>
+        <div class="err" id="f-err" role="alert"></div>
+        <div id="g-row" class="stack">
+          <label><span id="g-label">g initial velocity</span><input id="g" type="text" spellcheck="false" autocomplete="off"></label>
+          <div class="err" id="g-err" role="alert"></div>
+        </div>
+        <label id="us-row" hidden><span>Boundary temperature u<sub>s</sub> (held fixed)</span><input id="us" type="number" step="10" value="0"></label>
+        <p class="note">Type formulas the usual way: <code>1 - r/c</code>, <code>exp(-20*(r/c)^2)</code>, <code>sin(pi*x/L)</code>, <code>cos(θ)</code> (or <code>theta</code>). Use <code>*</code> to multiply and <code>^</code> for powers. Available: sin, cos, tan, exp, log, sqrt, abs, min, max, pi, besselj0. Piecewise: <code>x &lt; 0.3*L ? x : 0</code>. String boundary values may use t.</p>
+      </div>
+    </details>
+  </aside>
+</div>
+
+<script>
+  // If anything fails to load, say so on the page instead of showing an empty stage.
+  // The typesetting script is optional: without it the formulas show as plain text.
+  function showBootError(msg) {
+    var el = document.getElementById('boot-error');
+    if (el) { el.textContent = 'The 3D view could not start: ' + msg + ' Try reloading the page.'; el.hidden = false; }
+  }
+  addEventListener('error', function (e) {
+    if (e.target && e.target.id === 'mathjax') return;
+    showBootError((e.message || 'a script failed to load') + '.');
+  }, true);
+  addEventListener('unhandledrejection', function (e) { showBootError(String(e.reason && e.reason.message || e.reason) + '.'); });
+  // Typesetting loads in the background so the 3D starts at once; the panel re-renders when it is ready
+  // (or shows the formulas as plain text if it fails).
+  window.mjState = 'loading';
+  function mathjaxDone(state) { window.mjState = state; dispatchEvent(new Event('mathjax-done')); }
+  window.MathJax = {
+    startup: { typeset: false, ready: function () { MathJax.startup.defaultReady(); mathjaxDone('ready'); } },
+    svg: { fontCache: 'local' },
+  };
+</script>
+<script id="mathjax" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js" onerror="mathjaxDone('failed')"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.min.js"></script>
+<script type="module" src="src/ui.js"></script>
