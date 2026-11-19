@@ -15,6 +15,7 @@ export const PRESETS = {
   ],
   rect: [
     { id: 'pluck', label: 'Off-center pluck', f: 'max(0, 1 - sqrt((x - 0.35*Lx)^2 + (y - 0.4*Ly)^2)/(0.3*Ly))', g: '0' },
+    { id: '128-3', label: 'Zill 12.8 #3: π × π membrane, f = xy(x − π)(y − π), g = 0', f: 'x*y*(x - pi)*(y - pi)', g: '0', params: { Lx: Math.PI, Ly: Math.PI } },
     { id: 'mode12', label: 'Pure (1, 2) mode', f: 'sin(pi*x/Lx)*sin(2*pi*y/Ly)', g: '0' },
     { id: 'strike', label: 'Strike near a corner', f: '0', g: 'exp(-80*((x - 0.25*Lx)^2 + (y - 0.3*Ly)^2))', N: 150 },
   ],
@@ -23,6 +24,12 @@ export const PRESETS = {
     { id: 'ring', label: 'Ripple ring: thin pulse at r = 0.6c', f: 'exp(-150*(r/c - 0.6)^2)', g: '0', N: 300 },
   ],
   string: [
+    { id: '124-1', label: 'Zill 12.4 #1: f = x(L − x)/4, g = 0', f: 'x*(L - x)/4', g: '0' },
+    { id: '124-2', label: 'Zill 12.4 #2: f = 0, g = x(L − x)', f: '0', g: 'x*(L - x)' },
+    { id: '124-3', label: 'Zill 12.4 #3: f = 0, g = sin x on 0 < x < π', f: '0', g: 'sin(x)', params: { L: Math.PI } },
+    { id: '124-4', label: 'Zill 12.4 #4: f = x(π² − x²)/6, g = 0 on 0 < x < π', f: 'x*(pi^2 - x^2)/6', g: '0', params: { L: Math.PI } },
+    { id: '124-5', label: 'Zill 12.4 #5: f = x(1 − x), g = x(1 − x)', f: 'x*(1 - x)', g: 'x*(1 - x)', params: { L: 1 } },
+    { id: '124-6', label: 'Zill 12.4 #6: f = 0.01 sin 3x, g = 0 on 0 < x < π', f: '0.01*sin(3*x)', g: '0', params: { L: Math.PI } },
     { id: 'pluck', label: 'Pluck at 30%', f: 'x < 0.3*L ? x/(0.3*L) : (L - x)/(0.7*L)', g: '0' },
     { id: 'drive', label: 'Zill 12.6 #15: end driven, u(L, t) = sin t', f: '0', g: '0', bc: 'fixed', bcv: { right: 'sin(t)' } },
     { id: 'gravity', label: 'Zill 12.6 #10: falling under its own weight (g = 1)', f: '0', g: '0', bc: 'fixed', F: '-1' },
@@ -53,6 +60,8 @@ export const LAPLACE_PRESETS = {
   disk: [
     { id: 'rev1', label: 'Zill Ch. 13 Review #1: u₀ top half, −u₀ bottom', h: 'θ < pi ? 1 : -1' },
     { id: 'rev2', label: 'Zill Ch. 13 Review #2: 1 on the right half', h: 'θ < pi/2 or θ > 3*pi/2 ? 1 : 0' },
+    { id: '131-2', label: 'Zill 13.1 #2: h = θ on (0, π), 2π − θ on (π, 2π)', h: 'θ < pi ? θ : 2*pi - θ' },
+    { id: '131-4', label: 'Zill 13.1 #4: h = θ on (0, 2π)', h: 'θ' },
   ],
   rect: [
     { id: 'sine', label: 'h = sin(πx/Lx)', h: 'sin(pi*x/Lx)' },
@@ -65,7 +74,13 @@ export const LAPLACE_PRESETS = {
 const SHAPE_NAME = { sphere: 'Solid sphere', string: 'String', disk: 'Drum', rect: 'Rectangular membrane', cylinder: 'Solid cylinder' };
 export function problemList() {
   const items = Object.entries(PRESETS).flatMap(([shape, ps]) => ps.map(p => ({ shape, p })));
-  const book = items.filter(i => i.p.label.startsWith('Zill'));
+  const ref = l => {
+    const m = l.match(/Zill (\d+)\.(\d+) #(\d+)/), r = l.match(/Zill Ch\. (\d+) Review #(\d+)/);
+    return m ? [+m[1], +m[2], +m[3]] : r ? [+r[1], 99, +r[2]] : [999, 0, 0];
+  };
+  const order = ({ p }) => (p.id === 'book11' ? [-1, 0, 0] : ref(p.label));
+  const book = items.filter(i => i.p.label.startsWith('Zill'))
+    .sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; });
   const demos = items.filter(i => !i.p.label.startsWith('Zill'));
   return [
     ...book.map(({ shape, p }) => ({ group: 'From the book', value: `${shape}:${p.id}`, label: p.label })),

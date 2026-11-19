@@ -96,6 +96,15 @@ test('minor: besselj0 typesets as J_0 with its first zero x_1', () => {
   assert.ok(t.includes('J_0') && t.includes('x_1') && !t.includes('besselj0'), t);
 });
 
+test('problemList: book problems in section order after #11, including the assigned 12.4 and 12.8 ones', () => {
+  const book = problemList().filter(i => i.group === 'From the book').map(i => i.label);
+  assert.ok(book[0].startsWith('Zill 13.3 #11'), book[0]);
+  for (const ref of ['12.4 #1', '12.4 #6', '12.8 #3']) assert.ok(book.some(l => l.startsWith(`Zill ${ref}:`)), ref);
+  const key = l => { const m = l.match(/Zill (\d+)\.(\d+) #(\d+)/) || l.match(/Zill Ch\. (\d+) Review #(\d+)/); return m.length === 4 ? [+m[1], +m[2], +m[3]] : [+m[1], 99, +m[2]]; };
+  const keys = book.slice(1).map(key), before = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  for (let i = 1; i < keys.length; i++) assert.ok(before(keys[i - 1], keys[i]) <= 0, `${book[i]} before ${book[i + 1]}`);
+});
+
 test('bookCoefs leaves Laplace (ω = 0) coefficients alone', async () => {
   const { bookCoefs } = await import('../src/statement.js');
   const { A } = bookCoefs({ eqn: 'laplace', shape: 'sphere', bc: 'fixed', radial: true, a: 1 }, [{ omega: 0 }], [2], null);
