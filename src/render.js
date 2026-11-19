@@ -291,26 +291,8 @@ const CLOUD_FRAG = `
     gl_FragColor = vec4(vColor * a, a);
   }`;
 
-// Bead dots (unused by default views): small opaque shaded beads of fixed world size, so bunching (compression) and
-// spreading show as dot density, not as brightness.
-const BEAD_VERT = `
-  attribute vec3 color; varying vec3 vColor; uniform float scale; uniform float size;
-  void main() {
-    vColor = color;
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = size * scale / -mv.z;
-    gl_Position = projectionMatrix * mv;
-  }`;
-const BEAD_FRAG = `
-  varying vec3 vColor;
-  void main() {
-    vec2 d = gl_PointCoord - 0.5; float r2 = dot(d, d);
-    if (r2 > 0.25) discard;
-    float shade = 0.55 + 0.45 * sqrt(1.0 - 4.0 * r2); // lit from the front, like a small sphere
-    gl_FragColor = vec4(pow(vColor, vec3(1.0 / 2.2)) * shade, 1.0);
-  }`;
-
-function pointsPart({ coords, place, amp, group = 'cloud', bead = 0 }) {
+// minGlow keeps quiet points visible (wave spheres show their dotted shells even where u is ~0).
+function pointsPart({ coords, place, amp, group = 'cloud', minGlow = 0 }) {
   const n = coords.length, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), glow = new Float32Array(n);
   coords.forEach((c, k) => pos.set(place(c, 0, 0), k * 3));
   const geo = new THREE.BufferGeometry();
@@ -318,13 +300,11 @@ function pointsPart({ coords, place, amp, group = 'cloud', bead = 0 }) {
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
   const dark = new THREE.Color(css('--stage')).getHSL({}).l < 0.5;
-  const mat = bead
-    ? new THREE.ShaderMaterial({ vertexShader: BEAD_VERT, fragmentShader: BEAD_FRAG, uniforms: { scale: { value: 900 * (devicePixelRatio || 1) }, size: { value: bead } } })
-    : new THREE.ShaderMaterial({
-      vertexShader: CLOUD_VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
-      blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending,
-      uniforms: { scale: { value: 900 * (devicePixelRatio || 1) }, opacity: { value: dark ? 0.9 : 1 } },
-    });
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: CLOUD_VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
+    blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending,
+    uniforms: { scale: { value: 900 * (devicePixelRatio || 1) }, opacity: { value: dark ? 0.9 : 1 } },
+  });
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
   return {
@@ -334,7 +314,7 @@ function pointsPart({ coords, place, amp, group = 'cloud', bead = 0 }) {
         const v = u[off + k], a = Math.min(1, Math.abs(v) / vmax);
         pos.set(place(coords[k], soft(v, vmax), s), k * 3);
         cmap(v / vmax, col, k * 3);
-        glow[k] = Math.pow(a, 0.8); // quiet points stay small and faint
+        glow[k] = Math.max(minGlow, Math.pow(a, 0.8)); // quiet points stay small and faint (down to minGlow)
       }
       geo.attributes.position.needsUpdate = true;
       geo.attributes.color.needsUpdate = true;
@@ -496,6 +476,31 @@ function isoParts(p, opts, isCyl) {
   return { parts, extras, dir: [1, 0.6, 1.1] };
 }
 
+// Wave spheres (after "3D wave spheres" dot-art): nested spheres of glowing dots on latitude rings
+// (cylinder: nested tubes), each dot pushed along the radius by u and colored/glowing by u. The dots
+// are see-through, so every shell's ripple shows at once without cutting anything away.
+function waveSphereParts(p, opts, isCyl) {
+  const c = p.c, L = isCyl ? p.L : 0, coords = [];
+  for (const f of [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) {
+    const r = f * c, rings = Math.round(10 + 34 * f), step = Math.PI * r / rings; // ~even dot spacing
+    if (isCyl) {
+      const nz = Math.round(L / step), na = Math.round((2 * Math.PI * r) / step);
+      for (let i = 0; i <= nz; i++) for (let j = 0; j < na; j++) coords.push([r, (2 * Math.PI * j) / na, (L * i) / nz]);
+    } else {
+      for (let i = 1; i < rings; i++) {
+        const th = (Math.PI * i) / rings, na = Math.max(3, Math.round((2 * Math.PI * r * Math.sin(th)) / step));
+        for (let j = 0; j < na; j++) coords.push([r, th, (2 * Math.PI * (j + 0.5 * (i % 2))) / na]);
+      }
+    }
+  }
+  const place = isCyl ? (k, v, s) => cyl(k[0] + s * v, k[1], k[2], L) : (k, v, s) => sph(k[0] + s * v, k[1], k[2]);
+  const parts = [pointsPart({ coords, place, amp: 0.06 * c, group: 'cloud', minGlow: 0.45 })];
+  parts[0].object3D.renderOrder = 1;
+  const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.03 * c, 1.03 * c, 1.01 * L, 96, 1) : new THREE.SphereGeometry(1.03 * c, 96, 64))];
+  if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
+  return { parts, extras, dir: [1, 0.5, 1.2] };
+}
+
 function cloudParts(p, opts, isCyl) {
   const c = p.c, L = isCyl ? p.L : 0, rand = rng(7), coords = [], N = 9000;
   for (let k = 0; k < N; k++) {
@@ -619,6 +624,7 @@ export function buildMesh(shapeId, p, opts = {}) {
     : solid && opts.view === 'cloud' ? cloudParts(p, opts, isCyl)
     : solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
     : solid && opts.view === 'iso' ? isoParts(p, opts, isCyl)
+    : solid && opts.view === 'wavesph' ? waveSphereParts(p, opts, isCyl)
       : BUILDERS[shapeId](p, opts);
   const group = new THREE.Group();
   const coords = [], offs = [];
