@@ -466,6 +466,52 @@ const cyl = (r, th, z, L) => [r * Math.cos(th), z - L / 2, r * Math.sin(th)];
 // Slice view: one plane through the vertical axis at azimuth psi, displaced along its normal by u.
 // The two halves of the plane (s > 0 and s < 0) map to azimuths psi and psi + π.
 
+
+// Flat shapes (drum, rectangle): where a coordinate sits in the scene, its outline, and its size.
+function flatShape(shapeId, p) {
+  if (shapeId === 'disk') {
+    const c = p.c, rim = [];
+    for (let j = 0; j < 128; j++) {
+      const a = (2 * Math.PI * j) / 128, b = (2 * Math.PI * (j + 1)) / 128;
+      rim.push([c * Math.cos(a), 0, -c * Math.sin(a)], [c * Math.cos(b), 0, -c * Math.sin(b)]);
+    }
+    return {
+      size: c, amp: 0.28 * c, outline: rim, dir: [0.9, 0.85, 1.3],
+      // Grid points (x, z) inside the rim -> drum coordinates [r, θ] (z = -r sin θ).
+      grid: h => { const out = []; for (let x = -c; x <= c + 1e-9; x += h) for (let z = -c; z <= c + 1e-9; z += h) { const r = Math.hypot(x, z); if (r <= c * 0.999) out.push([r, Math.atan2(-z, x)]); } return out; },
+      at: (k, y) => [k[0] * Math.cos(k[1]), y, -k[0] * Math.sin(k[1])],
+    };
+  }
+  const { Lx, Ly } = p, x0 = -Lx / 2, x1 = Lx / 2, z0 = -Ly / 2, z1 = Ly / 2;
+  return {
+    size: Math.max(Lx, Ly) / 2, amp: 0.2 * Math.max(Lx, Ly), dir: [0.7, 0.9, 1.3],
+    outline: [[x0, 0, z0], [x1, 0, z0], [x1, 0, z0], [x1, 0, z1], [x1, 0, z1], [x0, 0, z1], [x0, 0, z1], [x0, 0, z0]],
+    grid: h => { const out = []; for (let x = h / 2; x < Lx; x += h) for (let y = h / 2; y < Ly; y += h) out.push([x, y]); return out; },
+    at: (k, y) => [k[0] - Lx / 2, y, Ly / 2 - k[1]],
+  };
+}
+// Dots: the membrane as a grid of dots, each lifted by u and colored by u. vis.flatN: dots across the
+// half-width (spacing); vis.flatDot: dot size.
+function flatDotParts(shapeId, p, opts) {
+  const vis = opts.vis || {}, F = flatShape(shapeId, p), h = F.size / (vis.flatN ?? 20), d = vis.flatDot ?? 1;
+  const parts = [pointsPart({ coords: F.grid(h), place: (k, v, s) => F.at(k, s * v), amp: F.amp, group: 'u', minGlow: 0.3, base: 0.35 * h * d, grow: 0.15 * h * d })];
+  return { parts, extras: [lines(F.outline, new THREE.Color(css('--muted')), 0.6)], dir: F.dir };
+}
+// Arrows: on a grid over the resting membrane, up where u > 0 and down where u < 0, length |u|.
+// vis.flatArrowN: arrows across the half-width (spacing); vis.flatArrowSize: arrow size.
+function flatArrowParts(shapeId, p, opts) {
+  const vis = opts.vis || {}, F = flatShape(shapeId, p), h = F.size / (vis.flatArrowN ?? 10);
+  const parts = [arrowPart({ coords: F.grid(h), place: k => F.at(k, 0), dir: () => [0, 1, 0], amp: 0.9 * h * (vis.flatArrowSize ?? 1), group: 'u' })];
+  return { parts, extras: [lines(F.outline, new THREE.Color(css('--muted')), 0.6)], dir: F.dir };
+}
+// String as beads: a row of beads lifted by u. vis.beads: how many; vis.beadSize: bead size.
+function beadParts(p, opts) {
+  const vis = opts.vis || {}, L = p.L, n = Math.round(vis.beads ?? 60), d = vis.beadSize ?? 1, gap = L / n;
+  const coords = Array.from({ length: n }, (_, i) => [((i + 0.5) * L) / n]);
+  const parts = [pointsPart({ coords, place: (k, v, s) => [k[0] - L / 2, s * v, 0], amp: 0.22 * L, group: 'u', minGlow: 0.3, base: 0.45 * gap * d, grow: 0.15 * gap * d })];
+  return { parts, extras: [lines([[-L / 2, 0, 0], [L / 2, 0, 0]], new THREE.Color(css('--muted')), 0.35)], dir: [0.12, 0.3, 1] };
+}
+
 const BUILDERS = { string: stringParts, disk: diskParts, rect: rectParts };
 
 export function buildMesh(shapeId, p, opts = {}) {
@@ -474,6 +520,9 @@ export function buildMesh(shapeId, p, opts = {}) {
   const { parts, extras, dir } = solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
     : solid && opts.view === 'glass' ? pondParts(p, opts, isCyl)
     : solid ? waveSphereParts(p, opts, isCyl)
+    : shapeId === 'string' && opts.view === 'beads' ? beadParts(p, opts)
+    : opts.view === 'dots' && shapeId !== 'string' ? flatDotParts(shapeId, p, opts)
+    : opts.view === 'arrows' && shapeId !== 'string' ? flatArrowParts(shapeId, p, opts)
       : BUILDERS[shapeId](p, opts);
   const group = new THREE.Group();
   const coords = [], offs = [];

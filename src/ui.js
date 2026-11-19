@@ -18,9 +18,12 @@ const view = createView($('stage'));
 const state = {
   eqn: 'wave', shape: 'sphere', bc: 'fixed', preset: 'book11', f: '1 - r/c', g: '0', us: 0, bcv: {}, F: '',
   params: { ...SHAPES.sphere.defaults }, N: 30, explore: false, idx: [], t: 0, speed: 0.5, playing: true,
-  gain: 1, showString: true, view: 'wavesph',
+  gain: 1, showString: true,
+  // Each shape remembers its own view (see VIEWS).
+  views: { sphere: 'wavesph', cylinder: 'wavesph', disk: 'surface', rect: 'surface', string: 'tube' },
   // Look of each view, adjustable from the View panel (see VIS_CONTROLS).
-  vis: { shells: 6, rings: 28, dot: 1, arrowN: 7.5, arrowSize: 1, corner: true, axis: 'x', angle: 0, thick: 1, wire: false, detail: 1 },
+  vis: { shells: 6, rings: 28, dot: 1, arrowN: 7.5, arrowSize: 1, corner: true, axis: 'x', angle: 0, thick: 1, wire: false, detail: 1,
+    flatN: 20, flatDot: 1, flatArrowN: 10, flatArrowSize: 1, beads: 60, beadSize: 1 },
 };
 let sol = null, mesh = null;
 // Last formulas that compiled, so a typo never strands a freshly rebuilt mesh without a solution.
@@ -88,7 +91,7 @@ function loadPreset(pre) {
   Object.assign(state, { preset: pre.id, f: pre.f ?? pre.h, g: pre.g ?? '0', us: pre.us ?? 0, t: 0, bcv: { ...(pre.bcv || {}) }, F: pre.F ?? '' });
   if (pre.bc) state.bc = pre.bc;
   if (pre.params) Object.assign(state.params, pre.params);
-  if (pre.view) state.view = pre.view; // e.g. motion that vanishes on the middle slice
+  if (pre.view) state.views[state.shape] = pre.view;
   if (pre.N && state.N < pre.N) state.N = Math.min(pre.N, SHAPES[state.shape].maxN); // narrow pulses need more terms
 }
 
@@ -106,6 +109,22 @@ function shapeChanged() {
 
 // View settings: sliders and options for the current view (solids) or shape. Each change rebuilds the
 // mesh (keeping the camera) after a short pause, so dragging a slider stays smooth.
+// The views each kind of shape offers, first = default.
+const SOLID_VIEWS = [
+  ['wavesph', 'Wave spheres: nested shells of dots, each dot pushed along the radius by u'],
+  ['lattice', 'Arrow field: arrows pointing out where u > 0 and in where u < 0'],
+  ['glass', 'Glass ball: a rippling slice through the middle of the clear solid'],
+];
+const FLAT_VIEWS = [
+  ['surface', 'Surface: the membrane as a colored sheet'],
+  ['dots', 'Dots: a grid of dots, each lifted by u'],
+  ['arrows', 'Arrows: up where u > 0, down where u < 0'],
+];
+const VIEWS = {
+  sphere: SOLID_VIEWS, cylinder: SOLID_VIEWS, disk: FLAT_VIEWS, rect: FLAT_VIEWS,
+  string: [['tube', 'String: a smooth tube'], ['beads', 'Beads: a row of beads, each lifted by u']],
+};
+const curView = () => state.views[state.shape];
 const VIS_CONTROLS = {
   wavesph: [
     { key: 'shells', label: 'Number of shells', min: 2, max: 10, step: 1 },
@@ -121,7 +140,19 @@ const VIS_CONTROLS = {
     { key: 'axis', label: 'Turn the slice about the', type: 'select', options: [['x', 'x axis'], ['y', 'y axis (vertical)'], ['z', 'z axis']] },
     { key: 'angle', label: 'Slice angle', min: 0, max: 180, step: 1, fmt: v => `${v}°` },
   ],
-  string: [{ key: 'thick', label: 'String thickness', min: 0.3, max: 4, step: 0.1, fmt: v => `${v.toFixed(1)}×` }],
+  tube: [{ key: 'thick', label: 'String thickness', min: 0.3, max: 4, step: 0.1, fmt: v => `${v.toFixed(1)}×` }],
+  beads: [
+    { key: 'beads', label: 'Number of beads', min: 15, max: 200, step: 1 },
+    { key: 'beadSize', label: 'Bead size', min: 0.3, max: 2.5, step: 0.1, fmt: v => `${v.toFixed(1)}×` },
+  ],
+  dots: [
+    { key: 'flatN', label: 'Dots across (spacing)', min: 6, max: 50, step: 1 },
+    { key: 'flatDot', label: 'Dot size', min: 0.3, max: 2.5, step: 0.1, fmt: v => `${v.toFixed(1)}×` },
+  ],
+  arrows: [
+    { key: 'flatArrowN', label: 'Arrows across (spacing)', min: 4, max: 24, step: 1 },
+    { key: 'flatArrowSize', label: 'Arrow size', min: 0.3, max: 2.5, step: 0.1, fmt: v => `${v.toFixed(1)}×` },
+  ],
   surface: [
     { key: 'detail', label: 'Surface detail', min: 0.5, max: 2, step: 0.25, fmt: v => `${v.toFixed(2)}×` },
     { key: 'wire', label: 'Show as a wire mesh', type: 'check' },
@@ -129,8 +160,8 @@ const VIS_CONTROLS = {
 };
 let visTimer;
 const visChanged = () => { clearTimeout(visTimer); visTimer = setTimeout(() => rebuild(false), 150); };
-function renderVis(solid) {
-  const list = solid ? VIS_CONTROLS[state.view] ?? [] : state.shape === 'string' ? VIS_CONTROLS.string : VIS_CONTROLS.surface;
+function renderVis() {
+  const list = VIS_CONTROLS[curView()] ?? [];
   $('vis').replaceChildren(...list.map(cfg => {
     const v = state.vis[cfg.key], id = `vis-${cfg.key}`;
     if (cfg.type === 'check') {
@@ -238,9 +269,9 @@ function syncControls() {
     + (wave && state.explore ? ' · showing one standing wave' : '');
   const solid = state.shape === 'sphere' || state.shape === 'cylinder';
   const withString = state.shape === 'sphere' && wave;
-  $('view-pick').hidden = !solid;
-  $('view').value = state.view;
-  renderVis(solid);
+  $('view-pick').querySelector('span').textContent = solid ? 'Show the inside as' : 'Show it as';
+  opt($('view'), VIEWS[state.shape], curView());
+  renderVis();
   $('string-row').hidden = $('string-note').hidden = !withString;
   $('legend-note').textContent = withString && state.showString ? '· right: string v = r·u' : '';
 }
@@ -287,7 +318,7 @@ function boundarySpec(p) {
 
 function rebuild(refit) {
   const showString = state.showString && state.eqn === 'wave';
-  mesh = buildMesh(state.shape, state.params, { showString, view: state.view, vis: state.vis });
+  mesh = buildMesh(state.shape, state.params, { showString, view: curView(), vis: state.vis });
   view.setObject(mesh.object3D, refit, mesh.dir);
   solve();
 }
@@ -441,7 +472,7 @@ $('play').addEventListener('click', () => {
 $('speed').addEventListener('input', e => { state.speed = +e.target.value; $('speed-out').textContent = `${state.speed.toFixed(2)}×`; });
 $('gain').addEventListener('input', e => { state.gain = +e.target.value; });
 $('scrub').addEventListener('input', e => { state.t = +e.target.value; });
-$('view').addEventListener('change', e => { state.view = e.target.value; syncControls(); rebuild(true); });
+$('view').addEventListener('change', e => { state.views[state.shape] = e.target.value; syncControls(); rebuild(true); });
 $('show-string').addEventListener('change', e => { state.showString = e.target.checked; syncControls(); rebuild(true); });
 
 // A book problem or demo, on any shape: start clean (that shape's defaults, 30 terms) and load it; the view stays.
