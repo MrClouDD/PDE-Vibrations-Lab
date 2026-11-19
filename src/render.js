@@ -130,7 +130,7 @@ const surfaceMat = (opts = {}) =>
   });
 
 // A (nu+1)×(nv+1) vertex grid. place(coords, value, scale) → [x,y,z]; static parts never move, only recolor.
-function gridPart({ nu, nv, coordAt, place, material, group = 'u', amp = 0, isStatic = false, value = (u) => u }) {
+function gridPart({ nu, nv, coordAt, place, material, group = 'u', amp = 0 }) {
   const coords = [];
   for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) coords.push(coordAt(i, j));
   const n = coords.length, pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
@@ -148,15 +148,16 @@ function gridPart({ nu, nv, coordAt, place, material, group = 'u', amp = 0, isSt
   const mesh = new THREE.Mesh(geo, material);
   mesh.castShadow = !material.transparent;
   return {
-    object3D: mesh, coords, group, amp, value,
+    object3D: mesh, coords, group, amp, value: u => u,
     update(u, off, s, vmax) {
       for (let k = 0; k < n; k++) {
-        const v = value(u[off + k], coords[k]);
-        if (!isStatic) pos.set(place(coords[k], soft(v, vmax), s), k * 3);
+        const v = u[off + k];
+        pos.set(place(coords[k], soft(v, vmax), s), k * 3);
         cmap(v / vmax, col, k * 3);
       }
       geo.attributes.color.needsUpdate = true;
-      if (!isStatic) { geo.attributes.position.needsUpdate = true; geo.computeVertexNormals(); }
+      geo.attributes.position.needsUpdate = true;
+      geo.computeVertexNormals();
     },
   };
 }
@@ -212,7 +213,7 @@ function companionString(c, R, parts, extras, ink) {
 
 // Glass ball: a slice through the middle, drawn with u as height off the slice, inside the clear solid.
 // vis.axis / vis.angle tilt the slice: it starts horizontal and turns about the x, y or z axis.
-function pondParts(p, opts, isCyl) {
+function glassParts(p, opts, isCyl) {
   const c = p.c, L = isCyl ? p.L : 0, vis = opts.vis || {}, NR = 90, NA = 160, ink = new THREE.Color(css('--muted'));
   const ang = ((vis.angle ?? 0) * Math.PI) / 180, axis = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[vis.axis || 'x'];
   const R = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(...axis), ang);
@@ -366,7 +367,7 @@ function arrowPart({ coords, place, dir, amp, group = 'arrows' }) {
 // Arrow field (default for solids): a regular grid filling the body; at each point an arrow along the
 // radius (cylinder: away from the axis), outward for u > 0, inward for u < 0, length |u|. A fixed wall
 // shows no arrows because u = 0 there. The scalar u is drawn along the radius — a picture of u.
-function latticeParts(p, opts, isCyl) {
+function arrowFieldParts(p, opts, isCyl) {
   // vis.arrowN: grid steps per radius (arrow spacing); vis.arrowSize: arrow length scale; vis.corner: cut a corner open.
   const vis = opts.vis || {}, c = p.c, L = isCyl ? p.L : 0, h = c / (vis.arrowN ?? 7.5), coords = [], corner = vis.corner ?? true;
   const span = isCyl ? Math.max(c, L / 2) : c;
@@ -385,7 +386,7 @@ function latticeParts(p, opts, isCyl) {
   // Outward unit vector (cylinder: away from the axis); the center point has none and is never drawn.
   const dir = isCyl ? k => (k[0] ? [Math.cos(k[1]), 0, Math.sin(k[1])] : [0, 0, 0]) : k => (k[0] ? sph(1, k[1], k[2]) : [0, 0, 0]);
   // Full-size arrow ~0.8 grid steps long at size 1, so neighbors don't overlap.
-  const parts = [arrowPart({ coords, place, dir, amp: 0.8 * h * (vis.arrowSize ?? 1), group: 'lattice' })];
+  const parts = [arrowPart({ coords, place, dir, amp: 0.8 * h * (vis.arrowSize ?? 1), group: 'arrows' })];
   const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.04 * c, 1.04 * c, 1.02 * L, 96, 1) : new THREE.SphereGeometry(1.04 * c, 96, 64))];
   if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
   return { parts, extras, dir: [1, 0.5, 1.2] };
@@ -517,8 +518,8 @@ const BUILDERS = { string: stringParts, disk: diskParts, rect: rectParts };
 export function buildMesh(shapeId, p, opts = {}) {
   const solid = shapeId === 'sphere' || shapeId === 'cylinder', isCyl = shapeId === 'cylinder';
   // Solids: arrow field, glass ball (rotatable middle slice), or wave spheres (the default).
-  const { parts, extras, dir } = solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
-    : solid && opts.view === 'glass' ? pondParts(p, opts, isCyl)
+  const { parts, extras, dir } = solid && opts.view === 'arrowfield' ? arrowFieldParts(p, opts, isCyl)
+    : solid && opts.view === 'glass' ? glassParts(p, opts, isCyl)
     : solid ? waveSphereParts(p, opts, isCyl)
     : shapeId === 'string' && opts.view === 'beads' ? beadParts(p, opts)
     : opts.view === 'dots' && shapeId !== 'string' ? flatDotParts(shapeId, p, opts)
@@ -554,9 +555,8 @@ export function buildMesh(shapeId, p, opts = {}) {
         scales[part.group] = Math.max(scales[part.group] || 0, part.amp / mm);
       });
     },
-    // groupGain lets a caller freeze one group's motion, e.g. { shell: 0 } to color shells without moving them.
-    apply(u, gain = 1, groupGain = {}) {
-      parts.forEach((part, pi) => part.update(u, offs[pi], scales[part.group] * gain * (groupGain[part.group] ?? 1), vmax[part.group] || 1));
+    apply(u, gain = 1) {
+      parts.forEach((part, pi) => part.update(u, offs[pi], scales[part.group] * gain, vmax[part.group] || 1));
     },
   };
 }

@@ -91,7 +91,6 @@ function loadPreset(pre) {
   Object.assign(state, { preset: pre.id, f: pre.f ?? pre.h, g: pre.g ?? '0', us: pre.us ?? 0, t: 0, bcv: { ...(pre.bcv || {}) }, F: pre.F ?? '' });
   if (pre.bc) state.bc = pre.bc;
   if (pre.params) Object.assign(state.params, pre.params);
-  if (pre.view) state.views[state.shape] = pre.view;
   if (pre.N && state.N < pre.N) state.N = Math.min(pre.N, SHAPES[state.shape].maxN); // narrow pulses need more terms
 }
 
@@ -112,7 +111,7 @@ function shapeChanged() {
 // The views each kind of shape offers, first = default.
 const SOLID_VIEWS = [
   ['wavesph', 'Wave spheres: nested shells of dots, each dot pushed along the radius by u'],
-  ['lattice', 'Arrow field: arrows pointing out where u > 0 and in where u < 0'],
+  ['arrowfield', 'Arrow field: arrows pointing out where u > 0 and in where u < 0'],
   ['glass', 'Glass ball: a rippling slice through the middle of the clear solid'],
 ];
 const FLAT_VIEWS = [
@@ -131,7 +130,7 @@ const VIS_CONTROLS = {
     { key: 'rings', label: 'Latitude rings (outer shell)', min: 8, max: 60, step: 1 },
     { key: 'dot', label: 'Dot size', min: 0.4, max: 3, step: 0.1, fmt: v => `${v.toFixed(1)}×` },
   ],
-  lattice: [
+  arrowfield: [
     { key: 'arrowN', label: 'Arrows per radius (spacing)', min: 4, max: 12, step: 0.5 },
     { key: 'arrowSize', label: 'Arrow size', min: 0.3, max: 2.5, step: 0.1, fmt: v => `${v.toFixed(1)}×` },
     { key: 'corner', label: 'Cut a corner open to see inside', type: 'check' },
@@ -384,62 +383,47 @@ function solveCore() {
     return;
   }
 
-  let modes, A, B, warnings = [], capped = false, N = state.N;
   if (state.explore) {
-    // A single pure mode φ cos(ωt): A = 1, B = 0.
-    modes = [S.mode(p, state.bc, state.idx)];
-    A = Float64Array.of(1); B = Float64Array.of(0);
+    // A single pure mode φ cos(ωt): A = 1, B = 0, so nothing drifts and nothing is capped.
+    const modes = [S.mode(p, state.bc, state.idx)], A = Float64Array.of(1), B = Float64Array.of(0);
     $('explore-info').textContent = `${modes[0].label}: ω = ${modes[0].omega.toFixed(4)}, period 2π/ω = ${((2 * Math.PI) / modes[0].omega).toFixed(4)}`;
-  } else {
-    if (f.error || g.error) return;
-    const spec = boundarySpec(p);
-    $('bcv-err').textContent = spec.error || '';
-    if (spec.error) return;
-    ({ N, capped } = clampN(S, state.N));
-    if (spec.timed) N = Math.min(N, 100); // time-driven problems integrate every mode over time
-    // Boundary values that vary with θ make the sphere's motion non-radial.
-    const rad = radial && !(spec.values.surface && !isRadial(spec.values.surface, () => 0, p.c));
-    const refPts = refPoints(S), refOut = new Float32Array(refPts.length);
-    const full = solveFull(S, p, state.bc, safe(f.fn), safe(g.fn), spec, N, mesh.coords, { radial: rad, refPts });
-    // Forcing, time-driven ends, or boundary data that push the whole body: modes are forced oscillators.
-    lastModal = !!spec.F || full.timed || (full.drift && Object.keys(spec.values).length > 0);
-    const S2 = full.timed ? full.window : (full.period ?? (2 * S.size(p)) / p.a);
-    calibrate(t => (evaluateFull(full, t, out), out), steps(full.drift ? 2 * S2 : S2),
-      t => (evaluateFull(full, t, refOut, undefined, full.ref), refOut));
-    const loop = full.period ?? (full.timed ? full.window : full.drift ? 2 * S2 : null);
-    sol = { kind: 'full', full, out, period: full.period, loop, window: loop ?? 10 * S2, rate: 1 };
-    $('warn').textContent = [
-      ...full.warnings,
-      capped ? `N capped at ${N} for this shape.` : '',
-      full.drift ? `The boundary data or average velocity push the whole body along (it accelerates or drifts); replaying every ${loop.toFixed(2)}.` : '',
-      full.timed ? `Time-driven problem: shown for 0 ≤ t ≤ ${full.window.toFixed(1)}, then replayed.` : '',
-    ].filter(Boolean).join(' ');
-    $('period').textContent = full.period
-      ? `Repeats exactly every ${full.period.toFixed(3)} time units${state.shape === 'sphere' && Math.abs(full.period - 2 * p.c / p.a) < 1e-6 ? ' (= 2c/a)' : ''}.`
-      : full.timed || full.drift ? 'Driven by the boundary or forcing: does not repeat.'
-        : 'Never exactly repeats: the active frequencies are not whole multiples of one another.';
+    const basis = basisOn(modes, mesh.coords), period = findPeriod(modes, A, B), win = period ?? (2 * S.size(p)) / p.a;
+    const refPts = refPoints(S), refBasis = basisOn(modes, refPts), refOut = new Float32Array(refPts.length);
+    calibrate(t => (evaluate(basis, modes, A, B, t, out), out), steps(win),
+      t => (evaluate(refBasis, modes, A, B, t, refOut), refOut));
+    sol = { kind: 'wave', modes, A, B, basis, out, period, loop: period, window: period ?? 10 * win, rate: 1 };
+    $('warn').textContent = '';
+    $('period').textContent = period ? `Repeats exactly every ${period.toFixed(3)} time units.` : 'This standing wave has ω = 0: it does not move.';
     $('scrub').max = sol.window;
     return;
   }
-  const basis = basisOn(modes, mesh.coords);
-  const period = findPeriod(modes, A, B);
-  // Calibrate over a window of times so a pure strike (f = 0) still gets a sensible size.
-  const win = period ?? (2 * S.size(p)) / p.a;
-  const refPts = refPoints(S), refBasis = basisOn(modes, refPts), refOut = new Float32Array(refPts.length);
-  calibrate(t => (evaluate(basis, modes, A, B, t, out), out), steps(win),
-    t => (evaluate(refBasis, modes, A, B, t, refOut), refOut));
-  // A free boundary with nonzero average velocity excites the ω = 0 rigid mode: the body drifts, so loop it.
-  const drift = modes.some((m, k) => m.omega === 0 && Math.abs(B[k]) > 1e-9);
-  const loop = period ?? (drift ? 2 * win : null);
-  sol = { kind: 'wave', modes, A, B, basis, out, period, loop, window: loop ?? 10 * win, rate: 1 };
+  if (f.error || g.error) return;
+  const spec = boundarySpec(p);
+  $('bcv-err').textContent = spec.error || '';
+  if (spec.error) return;
+  let { N, capped } = clampN(S, state.N);
+  if (spec.timed) N = Math.min(N, 100); // time-driven problems integrate every mode over time
+  // Boundary values that vary with θ make the sphere's motion non-radial.
+  const rad = radial && !(spec.values.surface && !isRadial(spec.values.surface, () => 0, p.c));
+  const refPts = refPoints(S), refOut = new Float32Array(refPts.length);
+  const full = solveFull(S, p, state.bc, safe(f.fn), safe(g.fn), spec, N, mesh.coords, { radial: rad, refPts });
+  // Forcing, time-driven ends, or boundary data that push the whole body: modes are forced oscillators.
+  lastModal = !!spec.F || full.timed || (full.drift && Object.keys(spec.values).length > 0);
+  const S2 = full.timed ? full.window : (full.period ?? (2 * S.size(p)) / p.a);
+  calibrate(t => (evaluateFull(full, t, out), out), steps(full.drift ? 2 * S2 : S2),
+    t => (evaluateFull(full, t, refOut, undefined, full.ref), refOut));
+  const loop = full.period ?? (full.timed ? full.window : full.drift ? 2 * S2 : null);
+  sol = { kind: 'full', full, out, period: full.period, loop, window: loop ?? 10 * S2, rate: 1 };
   $('warn').textContent = [
-    ...warnings,
+    ...full.warnings,
     capped ? `N capped at ${N} for this shape.` : '',
-    drift ? `Free boundary with nonzero average velocity: the whole body drifts (rigid-motion mode). Replaying every ${loop.toFixed(2)}.` : '',
+    full.drift ? `The boundary data or average velocity push the whole body along (it accelerates or drifts); replaying every ${loop.toFixed(2)}.` : '',
+    full.timed ? `Time-driven problem: shown for 0 ≤ t ≤ ${full.window.toFixed(1)}, then replayed.` : '',
   ].filter(Boolean).join(' ');
-  $('period').textContent = period
-    ? `Repeats exactly every ${period.toFixed(3)} time units${state.shape === 'sphere' && Math.abs(period - 2 * p.c / p.a) < 1e-6 ? ' (= 2c/a)' : ''}.`
-    : 'Never exactly repeats: the active frequencies are not whole multiples of one another.';
+  $('period').textContent = full.period
+    ? `Repeats exactly every ${full.period.toFixed(3)} time units${state.shape === 'sphere' && Math.abs(full.period - 2 * p.c / p.a) < 1e-6 ? ' (= 2c/a)' : ''}.`
+    : full.timed || full.drift ? 'Driven by the boundary or forcing: does not repeat.'
+      : 'Never exactly repeats: the active frequencies are not whole multiples of one another.';
   $('scrub').max = sol.window;
 }
 
@@ -520,7 +504,7 @@ function tick(now) {
       $('period').textContent = `Steady state, built one term at a time: ${n} of ${sol.modes.length} terms.`;
     } else if (sol.kind === 'full') evaluateFull(sol.full, state.t, sol.out);
     else evaluate(sol.basis, sol.modes, sol.A, sol.B, state.t, sol.out);
-    mesh.apply(sol.out, state.gain, sol.kind === 'wave' || sol.kind === 'full' ? undefined : { shell: 0 });
+    mesh.apply(sol.out, state.gain);
     $('t-out').textContent = state.t.toFixed(2);
     if (state.playing) $('scrub').value = state.t % sol.window;
     Object.assign(drawn, { sol, t: state.t, gain: state.gain });
