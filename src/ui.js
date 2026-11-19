@@ -389,11 +389,11 @@ $('psi').addEventListener('input', e => {
 });
 $('show-string').addEventListener('change', e => { state.showString = e.target.checked; syncControls(); rebuild(true); });
 
-// A book problem or demo, on any shape: start clean (that shape's defaults, 30 terms, glass view) and load it.
+// A book problem or demo, on any shape: start clean (that shape's defaults, 30 terms) and load it; the view stays.
 $('problem').addEventListener('change', e => {
   if (e.target.value === 'custom') { $('own').open = true; return; }
   const [shape, id] = e.target.value.split(':'), S = SHAPES[shape];
-  Object.assign(state, { eqn: 'wave', explore: false, shape, params: { ...S.defaults }, bc: S.bcs[0].id, N: 30, view: 'lattice', idx: S.explorer.map(x => x.def) });
+  Object.assign(state, { eqn: 'wave', explore: false, shape, params: { ...S.defaults }, bc: S.bcs[0].id, N: 30, idx: S.explorer.map(x => x.def) });
   good.f = good.g = null;
   $('shape').value = shape;
   loadPreset(PRESETS[shape].find(p => p.id === id));

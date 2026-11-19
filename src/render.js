@@ -199,37 +199,6 @@ function lines(points, color, opacity = 0.5) {
 
 const sph = (r, th, ph) => [r * Math.sin(th) * Math.cos(ph), r * Math.cos(th), r * Math.sin(th) * Math.sin(ph)];
 
-function sphereParts(p, opts) {
-  const c = p.c, parts = [], ink = new THREE.Color(css('--muted'));
-  const PH0 = Math.PI / 2, PH1 = 2 * Math.PI; // wedge 0 < φ < π/2 is cut away
-  // Cut faces: half-disks at φ = 0 and φ = π/2, colored by u.
-  // Each face is drawn as a relief of u that bulges into the empty wedge (normal +z for φ = 0, +x for φ = π/2).
-  for (const [ph, nrm] of [[0, [0, 0, 1]], [PH0, [1, 0, 0]]]) {
-    parts.push(gridPart({
-      nu: 60, nv: 60, amp: 0.22 * c, material: surfaceMat(),
-      coordAt: (i, j) => [(c * i) / 60, (Math.PI * j) / 60, ph],
-      place: (k, v, s) => { const q = sph(k[0], k[1], k[2]); return [q[0] + s * v * nrm[0], q[1], q[2] + s * v * nrm[2]]; },
-    }));
-  }
-  // Nested shells that breathe: radius r_k + s·u.
-  for (const f of [0.25, 0.5, 0.75, 0.95]) {
-    parts.push(gridPart({
-      nu: 48, nv: 96, amp: 0.06 * c, group: 'shell',
-      material: surfaceMat({ transparent: true, opacity: 0.22, depthWrite: false }),
-      coordAt: (i, j) => [f * c, (Math.PI * i) / 48, PH0 + ((PH1 - PH0) * j) / 96],
-      place: (k, v, s) => sph(k[0] + s * v, k[1], k[2]),
-    }));
-  }
-  // Fixed outer surface as a faint wire cage.
-  const seg = [];
-  const arc = (fn, a0, a1, m = 64) => { for (let i = 0; i < m; i++) seg.push(fn(a0 + ((a1 - a0) * i) / m), fn(a0 + ((a1 - a0) * (i + 1)) / m)); };
-  for (let k = 1; k < 6; k++) arc(ph => sph(c, (Math.PI * k) / 6, ph), PH0, PH1);
-  for (let k = 0; k <= 6; k++) arc(th => sph(c, th, PH0 + ((PH1 - PH0) * k) / 6), 0, Math.PI);
-  arc(th => sph(c, th, 0), 0, Math.PI);
-  const extras = [lines(seg, ink, 0.35)];
-  if (opts.showString) companionString(c, [0.31, 0, -0.95], parts, extras, ink);
-  return { parts, extras, dir: [1.7, 0.85, 0.55] };
-}
 
 // Companion string v = r*u (the hint's substitution), laid along R (the default view's screen-right).
 function companionString(c, R, parts, extras, ink) {
@@ -275,11 +244,11 @@ function pondParts(p, opts, isCyl) {
 // slightly along the radius with u. Additive blending on a dark stage makes wavefronts read as light.
 const CLOUD_VERT = `
   attribute float glow; attribute vec3 color; varying vec3 vColor; varying float vGlow;
-  uniform float scale;
+  uniform float scale; uniform float base; uniform float grow;
   void main() {
     vColor = color; vGlow = glow;
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = (0.03 + 0.1 * glow) * scale / -mv.z;
+    gl_PointSize = (base + grow * glow) * scale / -mv.z;
     gl_Position = projectionMatrix * mv;
   }`;
 const CLOUD_FRAG = `
@@ -291,8 +260,17 @@ const CLOUD_FRAG = `
     gl_FragColor = vec4(vColor * a, a);
   }`;
 
-// minGlow keeps quiet points visible (wave spheres show their dotted shells even where u is ~0).
-function pointsPart({ coords, place, amp, group = 'cloud', minGlow = 0 }) {
+// Crisp, opaque round dots (wave spheres): each dot reads separately instead of glows adding up.
+const DOT_FRAG = `
+  varying vec3 vColor; varying float vGlow;
+  void main() {
+    vec2 d = gl_PointCoord - 0.5; float r2 = dot(d, d);
+    if (r2 > 0.25) discard;
+    gl_FragColor = vec4(pow(vColor, vec3(1.0 / 2.2)) * (0.75 + 0.5 * vGlow) * (1.0 - 1.2 * r2), 1.0);
+  }`;
+
+// minGlow keeps quiet points visible; crisp draws opaque dots of base size `base` (wave spheres).
+function pointsPart({ coords, place, amp, group = 'cloud', minGlow = 0, crisp = false, base = 0.03, grow = 0.1 }) {
   const n = coords.length, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), glow = new Float32Array(n);
   coords.forEach((c, k) => pos.set(place(c, 0, 0), k * 3));
   const geo = new THREE.BufferGeometry();
@@ -300,11 +278,13 @@ function pointsPart({ coords, place, amp, group = 'cloud', minGlow = 0 }) {
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
   const dark = new THREE.Color(css('--stage')).getHSL({}).l < 0.5;
-  const mat = new THREE.ShaderMaterial({
-    vertexShader: CLOUD_VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
-    blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending,
-    uniforms: { scale: { value: 900 * (devicePixelRatio || 1) }, opacity: { value: dark ? 0.9 : 1 } },
-  });
+  const uniforms = { scale: { value: 900 * (devicePixelRatio || 1) }, opacity: { value: dark ? 0.9 : 1 }, base: { value: base }, grow: { value: grow } };
+  const mat = crisp
+    ? new THREE.ShaderMaterial({ vertexShader: CLOUD_VERT, fragmentShader: DOT_FRAG, uniforms })
+    : new THREE.ShaderMaterial({
+      vertexShader: CLOUD_VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
+      blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending, uniforms,
+    });
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
   return {
@@ -482,7 +462,7 @@ function isoParts(p, opts, isCyl) {
 function waveSphereParts(p, opts, isCyl) {
   const c = p.c, L = isCyl ? p.L : 0, coords = [];
   for (const f of [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) {
-    const r = f * c, rings = Math.round(10 + 34 * f), step = Math.PI * r / rings; // ~even dot spacing
+    const r = f * c, rings = Math.round(8 + 22 * f), step = Math.PI * r / rings; // ~even dot spacing
     if (isCyl) {
       const nz = Math.round(L / step), na = Math.round((2 * Math.PI * r) / step);
       for (let i = 0; i <= nz; i++) for (let j = 0; j < na; j++) coords.push([r, (2 * Math.PI * j) / na, (L * i) / nz]);
@@ -494,7 +474,7 @@ function waveSphereParts(p, opts, isCyl) {
     }
   }
   const place = isCyl ? (k, v, s) => cyl(k[0] + s * v, k[1], k[2], L) : (k, v, s) => sph(k[0] + s * v, k[1], k[2]);
-  const parts = [pointsPart({ coords, place, amp: 0.06 * c, group: 'cloud', minGlow: 0.45 })];
+  const parts = [pointsPart({ coords, place, amp: 0.06 * c, group: 'cloud', minGlow: 0.3, crisp: true, base: 0.009 * c, grow: 0.006 * c })];
   parts[0].object3D.renderOrder = 1;
   const extras = [glassShell(isCyl ? new THREE.CylinderGeometry(1.03 * c, 1.03 * c, 1.01 * L, 96, 1) : new THREE.SphereGeometry(1.03 * c, 96, 64))];
   if (!isCyl && opts.showString) companionString(c, [0.77, 0, -0.64], parts, extras, new THREE.Color(css('--muted')));
@@ -559,33 +539,6 @@ function rectParts(p) {
 
 // Solid cylinder r < c, 0 < z < L, axis vertical. Same cut-away idea as the sphere: wedge 0 < θ < π/2 removed.
 const cyl = (r, th, z, L) => [r * Math.cos(th), z - L / 2, r * Math.sin(th)];
-function cylinderParts(p) {
-  const { c, L } = p, parts = [], ink = new THREE.Color(css('--muted'));
-  const PH0 = Math.PI / 2, PH1 = 2 * Math.PI, NZ = Math.max(24, Math.round((40 * L) / c));
-  for (const [th, nrm] of [[0, [0, 0, 1]], [PH0, [1, 0, 0]]]) {
-    parts.push(gridPart({
-      nu: 40, nv: NZ, amp: 0.22 * c, material: surfaceMat(),
-      coordAt: (i, j) => [(c * i) / 40, th, (L * j) / NZ],
-      place: (k, v, s) => { const q = cyl(k[0], k[1], k[2], L); return [q[0] + s * v * nrm[0], q[1], q[2] + s * v * nrm[2]]; },
-    }));
-  }
-  for (const f of [0.33, 0.66, 0.95]) {
-    parts.push(gridPart({
-      nu: 72, nv: NZ, amp: 0.06 * c, group: 'shell',
-      material: surfaceMat({ transparent: true, opacity: 0.22, depthWrite: false }),
-      coordAt: (i, j) => [f * c, PH0 + ((PH1 - PH0) * i) / 72, (L * j) / NZ],
-      place: (k, v, s) => cyl(k[0] + s * v, k[1], k[2], L),
-    }));
-  }
-  const seg = [];
-  for (const z of [0, L]) for (let i = 0; i < 72; i++) {
-    const a = PH0 + ((PH1 - PH0) * i) / 72, b = PH0 + ((PH1 - PH0) * (i + 1)) / 72;
-    seg.push(cyl(c, a, z, L), cyl(c, b, z, L));
-  }
-  for (let i = 0; i <= 6; i++) { const a = PH0 + ((PH1 - PH0) * i) / 6; seg.push(cyl(c, a, 0, L), cyl(c, a, L, L)); }
-  for (const z of [0, L]) seg.push(cyl(0, 0, z, L), cyl(c, 0, z, L), cyl(0, 0, z, L), cyl(c, PH0, z, L));
-  return { parts, extras: [lines(seg, ink, 0.35)], dir: [1.7, 0.85, 0.55] };
-}
 
 // Slice view: one plane through the vertical axis at azimuth psi, displaced along its normal by u.
 // The two halves of the plane (s > 0 and s < 0) map to azimuths psi and psi + π.
@@ -615,7 +568,7 @@ function sliceParts(p, opts, isCyl) {
   return { parts, extras: [lines(seg, ink, 0.35)], dir: [0.6, 0.5, 1.5] };
 }
 
-const BUILDERS = { sphere: sphereParts, string: stringParts, disk: diskParts, rect: rectParts, cylinder: cylinderParts };
+const BUILDERS = { string: stringParts, disk: diskParts, rect: rectParts };
 
 export function buildMesh(shapeId, p, opts = {}) {
   const solid = shapeId === 'sphere' || shapeId === 'cylinder', isCyl = shapeId === 'cylinder';
@@ -625,6 +578,7 @@ export function buildMesh(shapeId, p, opts = {}) {
     : solid && opts.view === 'lattice' ? latticeParts(p, opts, isCyl)
     : solid && opts.view === 'iso' ? isoParts(p, opts, isCyl)
     : solid && opts.view === 'wavesph' ? waveSphereParts(p, opts, isCyl)
+    : solid ? latticeParts(p, opts, isCyl) // the arrow field is the default for solids
       : BUILDERS[shapeId](p, opts);
   const group = new THREE.Group();
   const coords = [], offs = [];
